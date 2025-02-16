@@ -38,12 +38,19 @@ contract KhugaBash is
     address[] private playerAddresses;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
     uint256 private constant SCORE_PER_GAME = 10;
+    bool private _paused;
 
     // Events
     event PlayerRegistered(address indexed player);
     event scoreEarned(address indexed player, uint256 score);
     event scoreUpdated(uint256 score, uint256 nonce);
     event LeaderboardUpdated(address indexed player, uint256 score);
+    event Paused(address account);
+    event Unpaused(address account);
+
+    // Errors
+    error EnforcedPause();
+    error ExpectedPause();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -52,10 +59,22 @@ contract KhugaBash is
 
     function initialize() public initializer {
         _initializeOwner(msg.sender);
+        _paused = false;
+    }
+
+    // Modifiers
+    modifier whenNotPaused() {
+        if (_paused) revert EnforcedPause();
+        _;
+    }
+
+    modifier whenPaused() {
+        if (!_paused) revert ExpectedPause();
+        _;
     }
 
     // Player Registration
-    function registerPlayer(uint256 nonce) external {
+    function registerPlayer(uint256 nonce) external whenNotPaused {
         require(!players[msg.sender].isRegistered, "Player already registered");
         
         players[msg.sender] = Player({
@@ -69,7 +88,7 @@ contract KhugaBash is
     }
 
     // Game score System
-    function awardScore(address player, uint256 multiplier) external onlyOwner {
+    function awardScore(address player, uint256 multiplier) external onlyOwner whenNotPaused {
         require(players[player].isRegistered, "Player not registered");
         
         uint256 scoreToAward = SCORE_PER_GAME * multiplier;
@@ -79,7 +98,7 @@ contract KhugaBash is
         emit LeaderboardUpdated(player, players[player].score);
     }
 
-    function updateScore(uint256 score, uint256 nonce, bytes calldata signature) external {
+    function updateScore(uint256 score, uint256 nonce, bytes calldata signature) external whenNotPaused {
         require(nonce == playerNonce[msg.sender] + 1  , "Invalid nonce");
 
         //  Recreate the message hash
@@ -146,6 +165,21 @@ contract KhugaBash is
 
     function setPlayerNonce(address player, uint256 nonce) external onlyOwner {
         playerNonce[player] = nonce;
+    }
+
+    // Pause Functions
+    function pause() external onlyOwner whenNotPaused {
+        _paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner whenPaused {
+        _paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    function paused() public view returns (bool) {
+        return _paused;
     }
 
     // Required override for UUPS proxy pattern
