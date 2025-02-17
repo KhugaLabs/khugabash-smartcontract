@@ -74,8 +74,23 @@ contract KhugaBash is
     }
 
     // Player Registration
-    function registerPlayer(uint256 nonce) external whenNotPaused {
+    function registerPlayer(uint256 nonce, bytes calldata signature) external whenNotPaused {
         require(!players[msg.sender].isRegistered, "Player already registered");
+        
+        // Recreate the message hash
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256("registerPlayer(address player,uint256 nonce)"),
+                msg.sender,
+                nonce
+            )
+        );
+        
+        bytes32 digest = _hashTypedData(structHash);
+
+        // Verify signature from backend
+        address signer = ECDSA.recover(digest, signature);
+        require(signer == backendSigner, "Invalid signature");
         
         players[msg.sender] = Player({
             score: 0,
