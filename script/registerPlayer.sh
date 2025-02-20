@@ -14,9 +14,4 @@ if [ -z "$NONCE" ]; then
     exit 1
 fi
 
-if [ -z "$SIGNATURE" ]; then
-    echo "Please provide the signature as an argument"
-    exit 1
-fi
-
-cast send $PROXY_ADDRESS "registerPlayer(uint256,bytes)" $NONCE $SIGNATURE --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync
+cast send $PROXY_ADDRESS "registerPlayer(uint256)" $NONCE --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync

@@ -5,15 +5,15 @@ import "solady/utils/Initializable.sol";
 import "solady/auth/Ownable.sol";
 import "solady/utils/ReentrancyGuard.sol";
 import "solady/utils/UUPSUpgradeable.sol";
+import "solady/utils/SignatureCheckerLib.sol";
 import "solady/utils/EIP712.sol";
-import "solady/utils/ECDSA.sol";
 
 /**
  * @title KhugaBash
  * @dev Main contract for the Khuga Bash game, implementing score system, stat upgrades, and leaderboard
  * @notice This is the zkSync version of the contract, optimized for L2 execution and upgradeable
  */
-contract KhugaBash is 
+contract KhugaBash is
     Initializable,
     Ownable,
     ReentrancyGuard,
@@ -38,12 +38,20 @@ contract KhugaBash is
     address[] private playerAddresses;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
     uint256 private constant SCORE_PER_GAME = 10;
+    bytes32 private constant SCORE_UPDATED_TYPE_HASH =
+        keccak256("ScoreUpdated(uint256 score,uint256 nonce)");
 
     // Events
     event PlayerRegistered(address indexed player, uint256 nonce);
-    event scoreEarned(address indexed player, uint256 score);
-    event scoreUpdated(uint256 score, uint256 nonce);
+    event ScoreEarned(address indexed player, uint256 score);
+    event ScoreUpdated(uint256 score, uint256 nonce);
     event LeaderboardUpdated(address indexed player, uint256 score);
+    event Debug(bytes32 messageHash, address signer, bytes signature);
+
+    error PlayerAlreadyRegistered();
+    error InvalidSignature();
+    error InvalidNonce();
+    error PlayerNotRegistered();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -55,21 +63,10 @@ contract KhugaBash is
     }
 
     // Player Registration
-    function registerPlayer(uint256 nonce, bytes calldata signature) external {
-        require(!players[msg.sender].isRegistered, "Player already registered");
-        
-        // Recreate the message hash
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, nonce));
-        bytes32 digest = _hashTypedData(messageHash);
+    function registerPlayer(uint256 nonce) external {
+        require(!players[msg.sender].isRegistered, PlayerAlreadyRegistered());
 
-        // Verify signature from backend
-        address signer = ECDSA.recover(digest, signature);
-        require(signer == backendSigner, "Invalid signature");
-        
-        players[msg.sender] = Player({
-            score: 0,
-            isRegistered: true
-        });
+        players[msg.sender] = Player({score: 0, isRegistered: true});
 
         playerNonce[msg.sender] = nonce;
         playerAddresses.push(msg.sender);
@@ -78,47 +75,56 @@ contract KhugaBash is
 
     // Game score System
     function awardScore(address player, uint256 multiplier) external onlyOwner {
-        require(players[player].isRegistered, "Player not registered");
-        
+        require(players[player].isRegistered, PlayerNotRegistered());
+
         uint256 scoreToAward = SCORE_PER_GAME * multiplier;
         players[player].score += scoreToAward;
-        
-        emit scoreEarned(player, scoreToAward);
+
+        emit ScoreEarned(player, scoreToAward);
         emit LeaderboardUpdated(player, players[player].score);
     }
 
-    function updateScore(uint256 score, uint256 nonce, bytes calldata signature) external {
-        require(nonce == playerNonce[msg.sender] + 1  , "Invalid nonce");
+    function updateScore(
+        uint256 score,
+        uint256 nonce,
+        bytes calldata signature
+    ) external {
+        require(nonce == playerNonce[msg.sender] + 1, InvalidNonce());
 
-        //  Recreate the message hash
-        bytes32 structHash = keccak256(
-            abi.encode(
-                keccak256("scoreUpdated(uint256 score,uint256 nonce)"),
-                score,
-                nonce
-            )
+        bytes32 messageHash = _hashTypedData(
+            keccak256(abi.encode(SCORE_UPDATED_TYPE_HASH, score, nonce))
         );
-        
-        bytes32 digest = _hashTypedData(structHash);
 
-        // Verify signature
-        address signer = ECDSA.recover(digest, signature);
-        require(signer == backendSigner, "Invalid signature");
+        if (
+            !SignatureCheckerLib.isValidSignatureNowCalldata(
+                backendSigner,
+                messageHash,
+                signature
+            )
+        ) {
+            revert InvalidSignature();
+        }
 
-        // Update points
         players[msg.sender].score += score;
         playerNonce[msg.sender]++;
-        emit scoreUpdated(score, nonce);
+
+        emit ScoreUpdated(score, nonce);
     }
 
     // Leaderboard Functions
-    function getTopPlayers(uint256 limit) external view returns (LeaderboardEntry[] memory) {
+    function getTopPlayers(
+        uint256 limit
+    ) external view returns (LeaderboardEntry[] memory) {
         uint256 size = playerAddresses.length;
         uint256 resultSize = size < limit ? size : limit;
-        resultSize = resultSize < MAX_LEADERBOARD_SIZE ? resultSize : MAX_LEADERBOARD_SIZE;
-        
-        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](resultSize);
-        
+        resultSize = resultSize < MAX_LEADERBOARD_SIZE
+            ? resultSize
+            : MAX_LEADERBOARD_SIZE;
+
+        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](
+            resultSize
+        );
+
         // Create initial array
         for (uint256 i = 0; i < resultSize; i++) {
             topPlayers[i] = LeaderboardEntry({
@@ -126,7 +132,7 @@ contract KhugaBash is
                 score: players[playerAddresses[i]].score
             });
         }
-        
+
         // Simple bubble sort (can be optimized for production)
         for (uint256 i = 0; i < resultSize - 1; i++) {
             for (uint256 j = 0; j < resultSize - i - 1; j++) {
@@ -137,13 +143,15 @@ contract KhugaBash is
                 }
             }
         }
-        
+
         return topPlayers;
     }
 
     // Player Stats
-    function getPlayerStats(address player) external view returns (Player memory) {
-        require(players[player].isRegistered, "Player not registered");
+    function getPlayerStats(
+        address player
+    ) external view returns (Player memory) {
+        require(players[player].isRegistered, PlayerNotRegistered());
         return players[player];
     }
 
@@ -157,10 +165,17 @@ contract KhugaBash is
     }
 
     // Required override for UUPS proxy pattern
-    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {}
 
-    function _domainNameAndVersion() internal pure virtual override returns (string memory name, string memory version) {
-        name = "KhugaBash";
-        version = "1";
+    function _domainNameAndVersion()
+        internal
+        pure
+        virtual
+        override
+        returns (string memory, string memory)
+    {
+        return ("KhugaBash", "1");
     }
 }
