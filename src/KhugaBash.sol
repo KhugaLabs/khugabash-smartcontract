@@ -40,6 +40,10 @@ contract KhugaBash is
     uint256 private constant SCORE_PER_GAME = 10;
     bytes32 private constant SCORE_UPDATED_TYPE_HASH =
         keccak256("ScoreUpdated(uint256 score,uint256 nonce)");
+    mapping(bytes32 => address[]) private bossKillers;
+    mapping(address => bytes32[]) private playerKilledBosses;
+    mapping(bytes32 => bool) private bossExists;
+    bytes32[] private allBosses;
 
     // Events
     event PlayerRegistered(address indexed player, uint256 nonce);
@@ -47,11 +51,15 @@ contract KhugaBash is
     event ScoreUpdated(uint256 score, uint256 nonce);
     event LeaderboardUpdated(address indexed player, uint256 score);
     event Debug(bytes32 messageHash, address signer, bytes signature);
+    event BossKilled(address indexed player, bytes32 indexed bossId);
+    event BossAdded(bytes32 indexed bossId);
 
     error PlayerAlreadyRegistered();
     error InvalidSignature();
     error InvalidNonce();
     error PlayerNotRegistered();
+    error BossNotExists();
+    error PlayerAlreadyKilledBoss();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -73,17 +81,7 @@ contract KhugaBash is
         emit PlayerRegistered(msg.sender, nonce);
     }
 
-    // Game score System
-    function awardScore(address player, uint256 multiplier) external onlyOwner {
-        require(players[player].isRegistered, PlayerNotRegistered());
-
-        uint256 scoreToAward = SCORE_PER_GAME * multiplier;
-        players[player].score += scoreToAward;
-
-        emit ScoreEarned(player, scoreToAward);
-        emit LeaderboardUpdated(player, players[player].score);
-    }
-
+    // Score Update
     function updateScore(
         uint256 score,
         uint256 nonce,
@@ -109,6 +107,44 @@ contract KhugaBash is
         playerNonce[msg.sender]++;
 
         emit ScoreUpdated(score, nonce);
+    }
+
+    // Boss Kill
+    function playerKilledBoss(
+        bytes32 bossId,
+        uint256 nonce,
+        bytes calldata signature
+    ) external {
+        require(players[msg.sender].isRegistered, PlayerNotRegistered());
+        require(nonce == playerNonce[msg.sender] + 1, InvalidNonce());
+        if (!bossExists[bossId]) revert BossNotExists();
+        
+        // Check if player already killed this boss
+        for (uint256 i = 0; i < playerKilledBosses[msg.sender].length; i++) {
+            if (playerKilledBosses[msg.sender][i] == bossId) {
+                revert PlayerAlreadyKilledBoss();
+            }
+        }
+        
+        bytes32 messageHash = _hashTypedData(
+            keccak256(abi.encode(SCORE_UPDATED_TYPE_HASH, uint256(bossId), nonce))
+        );
+        
+        if (
+            !SignatureCheckerLib.isValidSignatureNowCalldata(
+                backendSigner,
+                messageHash,
+                signature
+            )
+        ) {
+            revert InvalidSignature();
+        }
+        
+        bossKillers[bossId].push(msg.sender);
+        playerKilledBosses[msg.sender].push(bossId);
+        playerNonce[msg.sender]++;
+        
+        emit BossKilled(msg.sender, bossId);
     }
 
     // Leaderboard Functions
@@ -155,13 +191,83 @@ contract KhugaBash is
         return players[player];
     }
 
+     // Get all bosses that a player has killed
+    function getPlayerKilledBosses(address player) external view returns (bytes32[] memory) {
+        require(players[player].isRegistered, PlayerNotRegistered());
+        return playerKilledBosses[player];
+    }
+
+    // Get all players that killed a specific boss
+    function getBossKillers(bytes32 bossId) external view returns (address[] memory) {
+        if (!bossExists[bossId]) revert BossNotExists();
+        return bossKillers[bossId];
+    }
+
+    // Get all registered bosses
+    function getAllBosses() external view returns (bytes32[] memory) {
+        return allBosses;
+    }
+
+    // Check if a player has killed a specific boss
+    function hasPlayerKilledBoss(address player, bytes32 bossId) external view returns (bool) {
+        if (!players[player].isRegistered || !bossExists[bossId]) return false;
+        
+        for (uint256 i = 0; i < playerKilledBosses[player].length; i++) {
+            if (playerKilledBosses[player][i] == bossId) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
     // Admin Functions
     function setBackendSigner(address _backendSigner) external onlyOwner {
         backendSigner = _backendSigner;
     }
 
+    // Set Player Nonce
     function setPlayerNonce(address player, uint256 nonce) external onlyOwner {
         playerNonce[player] = nonce;
+    }
+
+    // Add Boss
+    function addBoss(bytes32 bossId) external onlyOwner {
+        if (bossExists[bossId]) return;
+        
+        bossExists[bossId] = true;
+        allBosses.push(bossId);
+        
+        emit BossAdded(bossId);
+    }
+
+    // Game score System
+    function awardScore(address player, uint256 multiplier) external onlyOwner {
+        require(players[player].isRegistered, PlayerNotRegistered());
+
+        uint256 scoreToAward = SCORE_PER_GAME * multiplier;
+        players[player].score += scoreToAward;
+
+        emit ScoreEarned(player, scoreToAward);
+        emit LeaderboardUpdated(player, players[player].score);
+    }
+
+    // Record Boss Kill
+    function recordBossKill(address player, bytes32 bossId) external onlyOwner {
+        require(players[player].isRegistered, PlayerNotRegistered());
+        if (!bossExists[bossId]) revert BossNotExists();
+        
+        // Check if player already killed this boss
+        for (uint256 i = 0; i < playerKilledBosses[player].length; i++) {
+            if (playerKilledBosses[player][i] == bossId) {
+                revert PlayerAlreadyKilledBoss();
+            }
+        }
+        
+        bossKillers[bossId].push(player);
+        playerKilledBosses[player].push(bossId);
+        
+        emit BossKilled(player, bossId);
     }
 
     // Required override for UUPS proxy pattern
