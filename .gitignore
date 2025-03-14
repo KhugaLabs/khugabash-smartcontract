@@ -16,3 +16,4 @@ zkout/
 .vscode/
 
 node_modules
+lib/
