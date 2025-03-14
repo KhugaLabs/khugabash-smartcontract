@@ -50,7 +50,6 @@ contract KhugaBash is
     event ScoreEarned(address indexed player, uint256 score);
     event ScoreUpdated(uint256 score, uint256 nonce);
     event LeaderboardUpdated(address indexed player, uint256 score);
-    event Debug(bytes32 messageHash, address signer, bytes signature);
     event BossKilled(address indexed player, bytes32 indexed bossId);
     event BossAdded(bytes32 indexed bossId);
 
