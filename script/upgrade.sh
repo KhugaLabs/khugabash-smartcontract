@@ -14,4 +14,4 @@ if [ -z "$NEW_IMPLEMENTATION" ]; then
     exit 1
 fi
 
-cast send $PROXY_ADDRESS "upgradeTo(address)" $NEW_IMPLEMENTATION --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync 
+cast send $PROXY_ADDRESS "upgradeToAndCall(address,bytes)" $NEW_IMPLEMENTATION 0x --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync
