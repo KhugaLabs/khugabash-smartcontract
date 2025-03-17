@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "solady/utils/Initializable.sol";
-import "solady/auth/Ownable.sol";
-import "solady/utils/ReentrancyGuard.sol";
-import "solady/utils/UUPSUpgradeable.sol";
-import "solady/utils/SignatureCheckerLib.sol";
-import "solady/utils/EIP712.sol";
+import "../lib/solady/src/utils/Initializable.sol";
+import "../lib/solady/src/auth/Ownable.sol";
+import "../lib/solady/src/utils/ReentrancyGuard.sol";
+import "../lib/solady/src/utils/UUPSUpgradeable.sol";
+import "../lib/solady/src/utils/SignatureCheckerLib.sol";
+import "../lib/solady/src/tokens/ERC721.sol";
+import "./CatridgeNFT.sol";
 
 /**
  * @title KhugaBash
@@ -17,12 +18,16 @@ contract KhugaBash is
     Initializable,
     Ownable,
     ReentrancyGuard,
-    UUPSUpgradeable,
-    EIP712
+    UUPSUpgradeable
 {
-    // Structs
+    // *******************************************
+    // *                                         *
+    // *               STRUCTS                   *
+    // *                                         *
+    // *******************************************
     struct Player {
         uint256 score;
+        uint256 nonce;
         bool isRegistered;
     }
 
@@ -31,34 +36,54 @@ contract KhugaBash is
         uint256 score;
     }
 
-    // State variables
-    mapping(address => Player) private players;
-    mapping(address => uint256) private playerNonce;
+    // *******************************************
+    // *                                         *
+    // *           STATE VARIABLES               *
+    // *                                         *
+    // *******************************************
     address public backendSigner;
-    address[] private playerAddresses;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
     uint256 private constant SCORE_PER_GAME = 10;
-    bytes32 private constant SCORE_UPDATED_TYPE_HASH =
-        keccak256("ScoreUpdated(uint256 score,uint256 nonce)");
+
+    address[] private playerAddresses;
+    mapping(address => Player) private players;
+    
+    bytes32[] private allBosses;
+    mapping(bytes32 => bool) private bossExists;
+    mapping(bytes32 => string) private bossNames;
+
     mapping(bytes32 => address[]) private bossKillers;
     mapping(address => bytes32[]) private playerKilledBosses;
-    mapping(bytes32 => bool) private bossExists;
-    bytes32[] private allBosses;
 
-    // Events
+    CatridgeNFT public catridgeNFT;
+
+    // *******************************************
+    // *                                         *
+    // *                EVENTS                   *
+    // *                                         *
+    // *******************************************// Events
     event PlayerRegistered(address indexed player, uint256 nonce);
     event ScoreEarned(address indexed player, uint256 score);
     event ScoreUpdated(uint256 score, uint256 nonce);
     event LeaderboardUpdated(address indexed player, uint256 score);
     event BossKilled(address indexed player, bytes32 indexed bossId);
     event BossAdded(bytes32 indexed bossId);
+    event CatridgeMinted(address indexed player, bytes32 indexed bossId, uint256 tokenId);
+    event SyncedData(address indexed player, uint256[] bosses, uint256 score, uint256 nonce);
 
+    // *******************************************
+    // *                                         *
+    // *                ERRORS                   *
+    // *                                         *
+    // *******************************************
     error PlayerAlreadyRegistered();
+    error BossesNotSet();
+    error InvalidBosses();
     error InvalidSignature();
-    error InvalidNonce();
     error PlayerNotRegistered();
     error BossNotExists();
-    error PlayerAlreadyKilledBoss();
+    error PlayerNotKilledBossYet();
+    error CatridgeSmartContractNotSet();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -69,84 +94,54 @@ contract KhugaBash is
         _initializeOwner(msg.sender);
     }
 
-    // Player Registration
-    function registerPlayer(uint256 nonce) external {
-        require(!players[msg.sender].isRegistered, PlayerAlreadyRegistered());
-
-        players[msg.sender] = Player({score: 0, isRegistered: true});
-
-        playerNonce[msg.sender] = nonce;
-        playerAddresses.push(msg.sender);
-        emit PlayerRegistered(msg.sender, nonce);
+    // *******************************************
+    // *                                         *
+    // *            ADMIN FUNCTIONS              *
+    // *                                         *
+    // *******************************************
+    function setBackendSigner(address _backendSigner) external onlyOwner {
+        backendSigner = _backendSigner;
     }
 
-    // Score Update
-    function updateScore(
-        uint256 score,
-        uint256 nonce,
-        bytes calldata signature
-    ) external {
-        require(nonce == playerNonce[msg.sender] + 1, InvalidNonce());
-
-        bytes32 messageHash = _hashTypedData(
-            keccak256(abi.encode(SCORE_UPDATED_TYPE_HASH, score, nonce))
-        );
-
-        if (
-            !SignatureCheckerLib.isValidSignatureNowCalldata(
-                backendSigner,
-                messageHash,
-                signature
-            )
-        ) {
-            revert InvalidSignature();
-        }
-
-        players[msg.sender].score += score;
-        playerNonce[msg.sender]++;
-
-        emit ScoreUpdated(score, nonce);
+    function setCatridgeNFT(address _catridgeNFT) external onlyOwner {
+        catridgeNFT = CatridgeNFT(_catridgeNFT);
     }
 
-    // Boss Kill
-    function playerKilledBoss(
-        bytes32 bossId,
-        uint256 nonce,
-        bytes calldata signature
-    ) external {
-        require(players[msg.sender].isRegistered, PlayerNotRegistered());
-        require(nonce == playerNonce[msg.sender] + 1, InvalidNonce());
-        if (!bossExists[bossId]) revert BossNotExists();
-        
-        // Check if player already killed this boss
-        for (uint256 i = 0; i < playerKilledBosses[msg.sender].length; i++) {
-            if (playerKilledBosses[msg.sender][i] == bossId) {
-                revert PlayerAlreadyKilledBoss();
-            }
-        }
-        
-        bytes32 messageHash = _hashTypedData(
-            keccak256(abi.encode(SCORE_UPDATED_TYPE_HASH, uint256(bossId), nonce))
-        );
-        
-        if (
-            !SignatureCheckerLib.isValidSignatureNowCalldata(
-                backendSigner,
-                messageHash,
-                signature
-            )
-        ) {
-            revert InvalidSignature();
-        }
-        
-        bossKillers[bossId].push(msg.sender);
-        playerKilledBosses[msg.sender].push(bossId);
-        playerNonce[msg.sender]++;
-        
-        emit BossKilled(msg.sender, bossId);
+    function setPlayerNonce(address player, uint256 nonce) external onlyOwner {
+        players[player].nonce = nonce;
     }
 
-    // Leaderboard Functions
+    function addBoss(bytes32 bossId) external onlyOwner {
+        if (bossExists[bossId]) return;
+        
+        bossExists[bossId] = true;
+        allBosses.push(bossId);
+        
+        emit BossAdded(bossId);
+    }
+
+    function awardScore(address player, uint256 multiplier) external onlyOwner {
+        require(players[player].isRegistered, PlayerNotRegistered());
+
+        uint256 scoreToAward = SCORE_PER_GAME * multiplier;
+        players[player].score += scoreToAward;
+
+        emit ScoreEarned(player, scoreToAward);
+        emit LeaderboardUpdated(player, players[player].score);
+    }
+
+    // *******************************************
+    // *                                         *
+    // *            READ FUNCTIONS               *
+    // *                                         *
+    // *******************************************
+    function getPlayerStats(
+        address player
+    ) external view returns (Player memory) {
+        require(players[player].isRegistered, PlayerNotRegistered());
+        return players[player];
+    }
+
     function getTopPlayers(
         uint256 limit
     ) external view returns (LeaderboardEntry[] memory) {
@@ -182,14 +177,6 @@ contract KhugaBash is
         return topPlayers;
     }
 
-    // Player Stats
-    function getPlayerStats(
-        address player
-    ) external view returns (Player memory) {
-        require(players[player].isRegistered, PlayerNotRegistered());
-        return players[player];
-    }
-
      // Get all bosses that a player has killed
     function getPlayerKilledBosses(address player) external view returns (bytes32[] memory) {
         require(players[player].isRegistered, PlayerNotRegistered());
@@ -208,7 +195,7 @@ contract KhugaBash is
     }
 
     // Check if a player has killed a specific boss
-    function hasPlayerKilledBoss(address player, bytes32 bossId) external view returns (bool) {
+    function hasPlayerKilledBoss(address player, bytes32 bossId) public view returns (bool) {
         if (!players[player].isRegistered || !bossExists[bossId]) return false;
         
         for (uint256 i = 0; i < playerKilledBosses[player].length; i++) {
@@ -219,68 +206,90 @@ contract KhugaBash is
         
         return false;
     }
+    
+    // *******************************************
+    // *                                         *
+    // *            WRITE FUNCTIONS              *
+    // *                                         *
+    // *******************************************
+    function registerPlayer(uint256 nonce, bytes calldata signature) external {
+        require(!players[msg.sender].isRegistered, PlayerAlreadyRegistered());
 
-    // Admin Functions
-    function setBackendSigner(address _backendSigner) external onlyOwner {
-        backendSigner = _backendSigner;
+        // check signature
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, nonce));
+        require(SignatureCheckerLib.isValidSignatureNowCalldata(backendSigner, messageHash, signature), InvalidSignature());
+
+        players[msg.sender] = Player({score: 0, nonce: nonce, isRegistered: true});
+        playerAddresses.push(msg.sender);
+
+        emit PlayerRegistered(msg.sender, nonce);
     }
 
-    // Set Player Nonce
-    function setPlayerNonce(address player, uint256 nonce) external onlyOwner {
-        playerNonce[player] = nonce;
-    }
+    function syncData(uint256[] calldata _bossIds, uint256 score, uint256 nonce, bytes calldata signature) external {
+        require(players[msg.sender].isRegistered, PlayerNotRegistered());
+        require(allBosses.length > 0, BossesNotSet());
 
-    // Add Boss
-    function addBoss(bytes32 bossId) external onlyOwner {
-        if (bossExists[bossId]) return;
+        if (_bossIds.length > 0) {
+            // check is bosses are valid
+            for (uint256 i = 0; i < _bossIds.length; i++) {
+                bytes32 bossId = bytes32(_bossIds[i]);
+                if (!bossExists[bossId]) {
+                    revert InvalidBosses();
+                }
+            }
+        }
+
+        // check signature
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, nonce));
+        if (
+            !SignatureCheckerLib.isValidSignatureNowCalldata(backendSigner, messageHash, signature)) {
+            revert InvalidSignature();
+        }
+
+        // update player score
+        players[msg.sender].score = score;
+        players[msg.sender].nonce = nonce + 1;
         
-        bossExists[bossId] = true;
-        allBosses.push(bossId);
-        
-        emit BossAdded(bossId);
+        // for each boss that player have not killed, add to player killed bosses
+        for (uint256 i = 0; i < _bossIds.length; i++) {
+            bytes32 bossId = bytes32(_bossIds[i]);
+            if (!hasPlayerKilledBoss(msg.sender, bossId)) {
+                playerKilledBosses[msg.sender].push(bossId);
+                bossKillers[bossId].push(msg.sender);
+            }
+        }
+
+        emit SyncedData(msg.sender, _bossIds, score, nonce);
     }
 
-    // Game score System
-    function awardScore(address player, uint256 multiplier) external onlyOwner {
-        require(players[player].isRegistered, PlayerNotRegistered());
-
-        uint256 scoreToAward = SCORE_PER_GAME * multiplier;
-        players[player].score += scoreToAward;
-
-        emit ScoreEarned(player, scoreToAward);
-        emit LeaderboardUpdated(player, players[player].score);
-    }
-
-    // Record Boss Kill
-    function recordBossKill(address player, bytes32 bossId) external onlyOwner {
-        require(players[player].isRegistered, PlayerNotRegistered());
-        if (!bossExists[bossId]) revert BossNotExists();
-        
-        // Check if player already killed this boss
-        for (uint256 i = 0; i < playerKilledBosses[player].length; i++) {
-            if (playerKilledBosses[player][i] == bossId) {
-                revert PlayerAlreadyKilledBoss();
+    function mintCatridge(bytes32 bossId, bytes calldata signature) external {
+        // Check if player has killed the boss
+        bool hasKilledBoss = false;
+        for (uint256 i = 0; i < playerKilledBosses[msg.sender].length; i++) {
+            if (playerKilledBosses[msg.sender][i] == bossId) {
+                hasKilledBoss = true;
+                break;
             }
         }
         
-        bossKillers[bossId].push(player);
-        playerKilledBosses[player].push(bossId);
+        require(!hasKilledBoss, PlayerNotKilledBossYet());
+        require(address(catridgeNFT) != address(0), CatridgeSmartContractNotSet());
+
+        // check signature
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, bossId));
+        if (
+            !SignatureCheckerLib.isValidSignatureNowCalldata(backendSigner, messageHash, signature)) {
+            revert InvalidSignature();
+        }
+
+        // Mint the NFT
+        uint256 tokenId = catridgeNFT.mintCatridge(msg.sender, bossId);
         
-        emit BossKilled(player, bossId);
+        emit CatridgeMinted(msg.sender, bossId, tokenId);
     }
 
     // Required override for UUPS proxy pattern
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyOwner {}
-
-    function _domainNameAndVersion()
-        internal
-        pure
-        virtual
-        override
-        returns (string memory, string memory)
-    {
-        return ("KhugaBash", "1");
-    }
 }

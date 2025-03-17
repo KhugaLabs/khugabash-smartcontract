@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "openzeppelin-contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import "../lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
-contract KhugaBashProxy is TransparentUpgradeableProxy {
+contract KhugaBashProxy is ERC1967Proxy {
     constructor(
         address _logic,
-        address _admin,
         bytes memory _data
-    ) TransparentUpgradeableProxy(_logic, _admin, _data) {}
+    ) ERC1967Proxy(_logic, _data) {}
 }
