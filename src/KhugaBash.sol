@@ -20,6 +20,8 @@ contract KhugaBash is
     ReentrancyGuard,
     UUPSUpgradeable
 {
+    using SignatureCheckerLib for address;
+
     // *******************************************
     // *                                         *
     // *               STRUCTS                   *
@@ -217,7 +219,7 @@ contract KhugaBash is
 
         // check signature
         bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, nonce));
-        require(SignatureCheckerLib.isValidSignatureNowCalldata(backendSigner, messageHash, signature), InvalidSignature());
+        require(backendSigner.isValidSignatureNowCalldata(messageHash, signature), InvalidSignature());
 
         players[msg.sender] = Player({score: 0, nonce: nonce, isRegistered: true});
         playerAddresses.push(msg.sender);
@@ -241,10 +243,7 @@ contract KhugaBash is
 
         // check signature
         bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, nonce));
-        if (
-            !SignatureCheckerLib.isValidSignatureNowCalldata(backendSigner, messageHash, signature)) {
-            revert InvalidSignature();
-        }
+        require(backendSigner.isValidSignatureNowCalldata(messageHash, signature), InvalidSignature());
 
         // update player score
         players[msg.sender].score = score;
