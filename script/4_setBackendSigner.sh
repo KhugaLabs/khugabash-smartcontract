@@ -3,11 +3,7 @@
 # Set the network to Base Sepolia
 RPC_URL="https://api.testnet.abs.xyz"
 CHAIN_ID="11124"
-BACKEND_SIGNER="0xBce4253a81B232cC41027dCbE33fDdA010dC33Aa"
+BACKEND_SIGNER=0xBE8665369c99Be217c7C37D0078e3f8a6F76d683
+PROXY_ADDRESS=0x7dccDe46D5FDA077924b46025937C92D9ea82894
 
-if [ -z "$PROXY_ADDRESS" ]; then
-    echo "Please provide the proxy address as an argument"
-    exit 1
-fi
-
-cast send $PROXY_ADDRESS "setBackendSigner(address)" $BACKEND_SIGNER --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync
+cast send $PROXY_ADDRESS "setBackendSigner(address)" $BACKEND_SIGNER --rpc-url $RPC_URL --account KhugaDeployer --chain $CHAIN_ID --zksync

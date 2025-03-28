@@ -14,4 +14,4 @@ if [ -z "$NONCE" ]; then
     exit 1
 fi
 
-cast send $PROXY_ADDRESS "registerPlayer(uint256)" $NONCE --rpc-url $RPC_URL --account KID --chain $CHAIN_ID --zksync
+cast send $PROXY_ADDRESS "registerPlayer(uint256)" $NONCE --rpc-url $RPC_URL --account KhugaDeployer --chain $CHAIN_ID --zksync
