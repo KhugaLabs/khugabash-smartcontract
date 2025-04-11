@@ -6,6 +6,10 @@ import "../lib/solady/src/auth/Ownable.sol";
 import "../lib/solady/src/utils/Base64.sol";
 import "../lib/solady/src/utils/LibString.sol";
 
+interface IBossRegistry {
+    function checkBossExists(bytes32 bossId) external view returns (bool);
+}
+
 contract KtridgeNFT is ERC721, Ownable {
     // *******************************************
     // *                                         *
@@ -111,6 +115,11 @@ contract KtridgeNFT is ERC721, Ownable {
         string calldata description,
         uint8 tier
     ) external onlyOwner {
+        require(
+            IBossRegistry(khugaBashAddress).checkBossExists(bossId),
+            "Boss does not exist"
+        );
+        
         bossMetadata[bossId] = BossMetadata({
             name: bossName,
             imageURI: imageURI,

@@ -54,6 +54,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     KtridgeNFT public ktridgeNFT;
 
     mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
+    mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
 
     // *******************************************
     // *                                         *
@@ -68,9 +69,10 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         bytes32 indexed bossId,
         uint256 tokenId
     );
-    event SyncedData(address indexed player, uint256[] bosses, uint256 score);
+    event SyncedData(address indexed player, bytes32[] bosses, uint256 score);
     event LeaderboardUpdated(address indexed player, uint256 score);
-    event DebugBossId(uint256 originalId, bytes32 convertedId, bool exists);
+    event BackendSignerSet(address indexed backendSigner);
+    event KtridgeNFTSet(address indexed ktridgeNFT);
 
     // *******************************************
     // *                                         *
@@ -88,6 +90,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     error SignatureAlreadyUsed();
     error BossAlreadyExists();
     error KtridgeAlreadyClaimed();
+    error InvalidBackendSigner();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -108,7 +111,11 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      * @param _backendSigner The address of the backend signer
      */
     function setBackendSigner(address _backendSigner) external onlyOwner {
-        backendSigner = _backendSigner;
+        if (_backendSigner == address(0)) revert InvalidBackendSigner();
+        if (backendSigner != _backendSigner) {
+            backendSigner = _backendSigner;
+            emit BackendSignerSet(_backendSigner);
+        }
     }
 
     /**
@@ -116,7 +123,10 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      * @param _ktridgeNFT The address of the Ktridge NFT contract
      */
     function setKtridgeNFT(address _ktridgeNFT) external onlyOwner {
-        ktridgeNFT = KtridgeNFT(_ktridgeNFT);
+        if (address(ktridgeNFT) != _ktridgeNFT) {
+            ktridgeNFT = KtridgeNFT(_ktridgeNFT);
+            emit KtridgeNFTSet(_ktridgeNFT);
+        }
     }
 
     /**
@@ -175,15 +185,15 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
             });
         }
 
-        // Simple bubble sort (can be optimized for production)
-        for (uint256 i = 0; i < resultSize - 1; i++) {
-            for (uint256 j = 0; j < resultSize - i - 1; j++) {
-                if (topPlayers[j].score < topPlayers[j + 1].score) {
-                    LeaderboardEntry memory temp = topPlayers[j];
-                    topPlayers[j] = topPlayers[j + 1];
-                    topPlayers[j + 1] = temp;
-                }
+        // Insertion sort
+        for (uint256 i = 1; i < resultSize; i++) {
+            LeaderboardEntry memory key = topPlayers[i];
+            uint256 j = i;
+            while (j > 0 && topPlayers[j - 1].score < key.score) {
+                topPlayers[j] = topPlayers[j - 1];
+                j--;
             }
+            topPlayers[j] = key;
         }
 
         return topPlayers;
@@ -233,13 +243,11 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     ) public view returns (bool) {
         if (!players[player].isRegistered || !bossExists[bossId]) return false;
 
-        for (uint256 i = 0; i < playerKilledBosses[player].length; i++) {
-            if (playerKilledBosses[player][i] == bossId) {
-                return true;
-            }
-        }
+        return playerHasKilledBoss[player][bossId];
+    }
 
-        return false;
+    function checkBossExists(bytes32 bossId) external view returns (bool) {
+        return bossExists[bossId];
     }
 
     // *******************************************
@@ -255,7 +263,9 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
 
         // check signature
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender));
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(block.chainid, msg.sender)
+        );
         if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
             revert InvalidSignature();
 
@@ -272,10 +282,10 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      * @param signature The signature of the player
      */
     function syncData(
-        uint256[] calldata _bossIds,
+        bytes32[] calldata _bossIds,
         uint256 score,
         bytes calldata signature
-    ) external {
+    ) external nonReentrant {
         if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
         if (allBosses.length == 0) revert BossesNotSet();
 
@@ -285,7 +295,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
 
         // Check signature
         bytes32 messageHash = keccak256(
-            abi.encodePacked(msg.sender, _bossIds, score)
+            abi.encodePacked(block.chainid, msg.sender, _bossIds, score)
         );
         if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
             revert InvalidSignature();
@@ -293,29 +303,28 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         // Mark signature as used
         usedSignatures[signatureHash] = true;
 
-        // Update player score
-        players[msg.sender].score = score;
+        // Update player score only if different
+        if (players[msg.sender].score != score) {
+            players[msg.sender].score = score;
+            emit LeaderboardUpdated(msg.sender, score);
+        }
 
         // For each boss that player has not killed, add to player killed bosses
         for (uint256 i = 0; i < _bossIds.length; i++) {
-            // Convert uint256 to bytes32 properly
-            bytes32 bossId = bytes32(_bossIds[i]);
-
-            // Add a debug event to help troubleshoot
-            emit DebugBossId(_bossIds[i], bossId, bossExists[bossId]);
+            bytes32 bossId = _bossIds[i];
 
             if (!bossExists[bossId]) {
                 revert InvalidBosses();
             }
 
-            if (!hasPlayerKilledBoss(msg.sender, bossId)) {
+            if (!playerHasKilledBoss[msg.sender][bossId]) {
                 playerKilledBosses[msg.sender].push(bossId);
                 bossKillers[bossId].push(msg.sender);
+                playerHasKilledBoss[msg.sender][bossId] = true;
             }
         }
 
         emit SyncedData(msg.sender, _bossIds, score);
-        emit LeaderboardUpdated(msg.sender, score);
     }
 
     /**
@@ -346,7 +355,9 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
 
         // check signature
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, bossId));
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(block.chainid, msg.sender, bossId)
+        );
         if (
             !backendSigner.isValidSignatureNowCalldata(messageHash, signature)
         ) {
