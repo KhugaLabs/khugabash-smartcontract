@@ -21,6 +21,7 @@ contract KtridgeNFT is ERC721, Ownable {
         string imageURI;
         string description;
         uint8 tier;
+        bool exists;
     }
 
     // *******************************************
@@ -34,7 +35,7 @@ contract KtridgeNFT is ERC721, Ownable {
     mapping(address => mapping(bytes32 => uint256)) public playerBossToToken;
     mapping(bytes32 => BossMetadata) public bossMetadata;
     mapping(uint8 => string) public tierNames;
-    string public _contractURI;
+    string private _contractURI;
 
     // *******************************************
     // *                                         *
@@ -51,6 +52,9 @@ contract KtridgeNFT is ERC721, Ownable {
         bytes32 indexed bossId,
         uint256 tokenId
     );
+    event BossMetadataSet(bytes32 indexed bossId);
+    event KhugaBashAddressSet(address indexed khugaBashAddress);
+    event TierNameSet(uint8 indexed tier, string name);
 
     // *******************************************
     // *                                         *
@@ -60,6 +64,10 @@ contract KtridgeNFT is ERC721, Ownable {
     error InvalidKhugaBashAddress();
     error OnlyKhugaBashCanMint();
     error NotAuthorizedToBurn();
+    error BossDoesNotExist();
+    error KhugaBashAddressNotSet();
+    error BossMetadataNotSet();
+    error InvalidTier();
 
     // *******************************************
     // *                                         *
@@ -89,6 +97,7 @@ contract KtridgeNFT is ERC721, Ownable {
     function setKhugaBashAddress(address _khugaBashAddress) external onlyOwner {
         if (_khugaBashAddress == address(0)) revert InvalidKhugaBashAddress();
         khugaBashAddress = _khugaBashAddress;
+        emit KhugaBashAddressSet(_khugaBashAddress);
     }
 
     /**
@@ -97,7 +106,9 @@ contract KtridgeNFT is ERC721, Ownable {
      * @param _name The name of the tier
      */
     function setTierName(uint8 tier, string calldata _name) external onlyOwner {
+        if (tier > 4) revert InvalidTier();
         tierNames[tier] = _name;
+        emit TierNameSet(tier, _name);
     }
 
     /**
@@ -115,17 +126,20 @@ contract KtridgeNFT is ERC721, Ownable {
         string calldata description,
         uint8 tier
     ) external onlyOwner {
-        require(
-            IBossRegistry(khugaBashAddress).checkBossExists(bossId),
-            "Boss does not exist"
-        );
+        if (khugaBashAddress == address(0)) revert KhugaBashAddressNotSet();
+        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId))
+            revert BossDoesNotExist();
+        if (tier > 4) revert InvalidTier();
         
         bossMetadata[bossId] = BossMetadata({
             name: bossName,
             imageURI: imageURI,
             description: description,
-            tier: tier
+            tier: tier,
+            exists: true
         });
+        
+        emit BossMetadataSet(bossId);
     }
 
     /**
@@ -147,8 +161,8 @@ contract KtridgeNFT is ERC721, Ownable {
      * @return The tier of the token
      */
     function getTierOfToken(uint256 tokenId) public view returns (uint8) {
-        require(_ownerOf(tokenId) != address(0), TokenDoesNotExist());
         bytes32 bossId = tokenToBoss[tokenId];
+        if (!bossMetadata[bossId].exists) revert BossMetadataNotSet();
         return bossMetadata[bossId].tier;
     }
 
@@ -192,6 +206,11 @@ contract KtridgeNFT is ERC721, Ownable {
         address player,
         bytes32 bossId
     ) external onlyKhugaBash returns (uint256) {
+        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId)) 
+            revert BossDoesNotExist();
+        if (!bossMetadata[bossId].exists) 
+            revert BossMetadataNotSet();
+
         // Check if player already has a Ktridge for this boss
         uint256 existingToken = playerBossToToken[player][bossId];
         if (existingToken != 0) {
@@ -219,7 +238,6 @@ contract KtridgeNFT is ERC721, Ownable {
      */
     function burnKtridge(uint256 tokenId) external {
         address tokenOwner = _ownerOf(tokenId);
-        if (tokenOwner == address(0)) revert TokenDoesNotExist();
 
         // Only token owner or approved address can burn
         if (
@@ -254,10 +272,10 @@ contract KtridgeNFT is ERC721, Ownable {
     function tokenURI(
         uint256 tokenId
     ) public view override returns (string memory) {
-        require(_ownerOf(tokenId) != address(0), TokenDoesNotExist());
-
         bytes32 bossId = tokenToBoss[tokenId];
         BossMetadata memory metadata = bossMetadata[bossId];
+        
+        if (!metadata.exists) revert BossMetadataNotSet();
 
         string memory tierName = tierNames[metadata.tier];
 
@@ -316,7 +334,10 @@ contract KtridgeNFT is ERC721, Ownable {
      * @notice Withdraw ETH from the contract
      */
     function withdraw() external onlyOwner {
-        (bool success, ) = owner().call{value: address(this).balance}("");
+        uint256 balance = address(this).balance;
+        if (balance == 0) return;
+        
+        (bool success, ) = owner().call{value: balance}("");
         require(success, "Transfer failed");
     }
 

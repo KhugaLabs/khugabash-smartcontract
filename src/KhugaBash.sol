@@ -46,7 +46,6 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
 
     bytes32[] private allBosses;
     mapping(bytes32 => bool) private bossExists;
-    mapping(bytes32 => string) private bossNames;
 
     mapping(bytes32 => address[]) private bossKillers;
     mapping(address => bytes32[]) private playerKilledBosses;
@@ -91,6 +90,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     error BossAlreadyExists();
     error KtridgeAlreadyClaimed();
     error InvalidBackendSigner();
+    error InvalidKtridgeNFTAddress();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -123,6 +123,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      * @param _ktridgeNFT The address of the Ktridge NFT contract
      */
     function setKtridgeNFT(address _ktridgeNFT) external onlyOwner {
+        if (_ktridgeNFT == address(0)) revert InvalidKtridgeNFTAddress();
         if (address(ktridgeNFT) != _ktridgeNFT) {
             ktridgeNFT = KtridgeNFT(_ktridgeNFT);
             emit KtridgeNFTSet(_ktridgeNFT);
@@ -168,32 +169,53 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         uint256 limit
     ) external view returns (LeaderboardEntry[] memory) {
         uint256 size = playerAddresses.length;
+        
+        // Cap to the smaller of the requested limit, MAX_LEADERBOARD_SIZE, or actual array size
         uint256 resultSize = size < limit ? size : limit;
         resultSize = resultSize < MAX_LEADERBOARD_SIZE
             ? resultSize
             : MAX_LEADERBOARD_SIZE;
 
-        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](
-            resultSize
-        );
-
-        // Create initial array
-        for (uint256 i = 0; i < resultSize; i++) {
-            topPlayers[i] = LeaderboardEntry({
-                player: playerAddresses[i],
-                score: players[playerAddresses[i]].score
-            });
+        if (resultSize == 0) {
+            return new LeaderboardEntry[](0);
         }
 
-        // Insertion sort
-        for (uint256 i = 1; i < resultSize; i++) {
-            LeaderboardEntry memory key = topPlayers[i];
-            uint256 j = i;
-            while (j > 0 && topPlayers[j - 1].score < key.score) {
-                topPlayers[j] = topPlayers[j - 1];
-                j--;
+        // Create temporary array of all players to sort
+        LeaderboardEntry[] memory allPlayers = new LeaderboardEntry[](size);
+        for (uint256 i = 0; i < size; i++) {
+            address playerAddr = playerAddresses[i];
+            allPlayers[i] = LeaderboardEntry({
+                player: playerAddr,
+                score: players[playerAddr].score
+            });
+        }
+        
+        // Sort using a simple heap sort approach for the top N players
+        // This is more efficient than insertion sort for large arrays
+        for (uint256 i = 0; i < resultSize; i++) {
+            // Find highest score player among remaining
+            uint256 highestIndex = i;
+            uint256 highestScore = allPlayers[i].score;
+            
+            for (uint256 j = i + 1; j < size; j++) {
+                if (allPlayers[j].score > highestScore) {
+                    highestIndex = j;
+                    highestScore = allPlayers[j].score;
+                }
             }
-            topPlayers[j] = key;
+            
+            // Swap if we found a higher score
+            if (highestIndex != i) {
+                LeaderboardEntry memory temp = allPlayers[i];
+                allPlayers[i] = allPlayers[highestIndex];
+                allPlayers[highestIndex] = temp;
+            }
+        }
+        
+        // Create the result array with just the top players
+        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](resultSize);
+        for (uint256 i = 0; i < resultSize; i++) {
+            topPlayers[i] = allPlayers[i];
         }
 
         return topPlayers;
@@ -261,11 +283,10 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      */
     function registerPlayer(bytes calldata signature) external {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
+        if (backendSigner == address(0)) revert InvalidBackendSigner();
 
         // check signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(block.chainid, msg.sender)
-        );
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender));
         if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
             revert InvalidSignature();
 
@@ -288,15 +309,14 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     ) external nonReentrant {
         if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
         if (allBosses.length == 0) revert BossesNotSet();
+        if (backendSigner == address(0)) revert InvalidBackendSigner();
 
         // Verify signature first
         bytes32 signatureHash = keccak256(signature);
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
 
         // Check signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(block.chainid, msg.sender, _bossIds, score)
-        );
+        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _bossIds, score));
         if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
             revert InvalidSignature();
 
@@ -313,14 +333,15 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         for (uint256 i = 0; i < _bossIds.length; i++) {
             bytes32 bossId = _bossIds[i];
 
-            if (!bossExists[bossId]) {
-                revert InvalidBosses();
-            }
+            if (!bossExists[bossId]) revert InvalidBosses();
 
             if (!playerHasKilledBoss[msg.sender][bossId]) {
                 playerKilledBosses[msg.sender].push(bossId);
                 bossKillers[bossId].push(msg.sender);
                 playerHasKilledBoss[msg.sender][bossId] = true;
+                
+                // Emit event for each boss killed
+                emit BossKilled(msg.sender, bossId);
             }
         }
 
@@ -338,6 +359,7 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     ) external nonReentrant {
         // Check if player is registered
         if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
+        if (backendSigner == address(0)) revert InvalidBackendSigner();
 
         // Check if player has already claimed an NFT for this boss
         if (hasClaimedKtridge[msg.sender][bossId])
@@ -356,13 +378,10 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
 
         // check signature
         bytes32 messageHash = keccak256(
-            abi.encodePacked(block.chainid, msg.sender, bossId)
+            abi.encodePacked(msg.sender, bossId)
         );
-        if (
-            !backendSigner.isValidSignatureNowCalldata(messageHash, signature)
-        ) {
+        if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
             revert InvalidSignature();
-        }
 
         // Mark signature as used
         usedSignatures[signatureHash] = true;
