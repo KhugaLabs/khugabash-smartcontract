@@ -55,6 +55,8 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
     mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
 
+    mapping(address => uint256) private playerLastScoreUpdated;
+
     // *******************************************
     // *                                         *
     // *                EVENTS                   *
@@ -272,6 +274,18 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         return bossExists[bossId];
     }
 
+    /**
+     * @notice Get the last time a player's score was updated
+     * @param player The address of the player
+     * @return The timestamp of the last score update
+     */
+    function getPlayerLastScoreUpdated(
+        address player
+    ) external view returns (uint256) {
+        if (!players[player].isRegistered) revert PlayerNotRegistered();
+        return playerLastScoreUpdated[player];
+    }
+
     // *******************************************
     // *                                         *
     // *            WRITE FUNCTIONS              *
@@ -286,12 +300,24 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         if (backendSigner == address(0)) revert InvalidBackendSigner();
 
         // check signature
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender));
-        if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
-            revert InvalidSignature();
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                // Add a unique identifier for this function
+                bytes4(keccak256("registerPlayer(address)")),
+                msg.sender
+            )
+        );
+        if (
+            !SignatureChecker.isValidSignatureNow(
+                backendSigner,
+                messageHash,
+                signature
+            )
+        ) revert InvalidSignature();
 
         players[msg.sender] = Player({score: 0, isRegistered: true});
         playerAddresses.push(msg.sender);
+        playerLastScoreUpdated[msg.sender] = block.timestamp;
 
         emit PlayerRegistered(msg.sender);
     }
@@ -300,11 +326,13 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
      * @notice Sync data from the backend
      * @param _bossIds The IDs of the bosses
      * @param score The score of the player
+     * @param timestamp The time when the backend signed this data
      * @param signature The signature of the player
      */
     function syncData(
         bytes32[] calldata _bossIds,
         uint256 score,
+        uint256 timestamp,
         bytes calldata signature
     ) external nonReentrant {
         if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
@@ -316,16 +344,36 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
 
         // Check signature
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender, _bossIds, score));
-        if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
-            revert InvalidSignature();
+        bytes32 messageHash = keccak256(
+            abi.encodePacked(
+                bytes4(
+                    keccak256("syncData(address,bytes32[],uint256,uint256)")
+                ),
+                msg.sender,
+                _bossIds,
+                score,
+                timestamp
+            )
+        );
+        if (
+            !SignatureChecker.isValidSignatureNow(
+                backendSigner,
+                messageHash,
+                signature
+            )
+        ) revert InvalidSignature();
 
         // Mark signature as used
         usedSignatures[signatureHash] = true;
 
-        // Update player score only if different
-        if (players[msg.sender].score != score) {
+        // Update player score only if the timestamp is newer than the last update
+        // and the score is different
+        if (
+            timestamp > playerLastScoreUpdated[msg.sender] &&
+            players[msg.sender].score != score
+        ) {
             players[msg.sender].score = score;
+            playerLastScoreUpdated[msg.sender] = timestamp;
             emit LeaderboardUpdated(msg.sender, score);
         }
 
@@ -378,10 +426,19 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
 
         // check signature
         bytes32 messageHash = keccak256(
-            abi.encodePacked(msg.sender, bossId)
+            abi.encodePacked(
+                bytes4(keccak256("mintKtridge(address,bytes32)")),
+                msg.sender,
+                bossId
+            )
         );
-        if (!backendSigner.isValidSignatureNowCalldata(messageHash, signature))
-            revert InvalidSignature();
+        if (
+            !SignatureChecker.isValidSignatureNow(
+                backendSigner,
+                messageHash,
+                signature
+            )
+        ) revert InvalidSignature();
 
         // Mark signature as used
         usedSignatures[signatureHash] = true;
