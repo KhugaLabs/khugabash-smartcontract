@@ -93,6 +93,7 @@ contract KhugaBash is
     error PlayerNotKilledBossYet();
     error KtridgeSmartContractNotSet();
     error SignatureAlreadyUsed();
+    error InvalidBossId();
     error BossAlreadyExists();
     error KtridgeAlreadyClaimed();
     error InvalidBackendSigner();
@@ -142,6 +143,7 @@ contract KhugaBash is
      * @param bossId The ID of the boss to add
      */
     function addBoss(bytes32 bossId) external onlyOwner {
+        if (bossId == bytes32(0)) revert InvalidBossId();
         if (bossExists[bossId]) revert BossAlreadyExists();
 
         bossExists[bossId] = true;

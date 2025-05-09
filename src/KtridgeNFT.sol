@@ -140,7 +140,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId))
             revert BossDoesNotExist();
         if (tier > 4) revert InvalidTier();
-        
+
         bossMetadata[bossId] = BossMetadata({
             name: bossName,
             imageURI: imageURI,
@@ -148,7 +148,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
             tier: tier,
             exists: true
         });
-        
+
         emit BossMetadataSet(bossId);
     }
 
@@ -242,7 +242,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         address player,
         bytes32 bossId
     ) external onlyKhugaBash returns (uint256) {
-        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId)) 
+        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId))
             revert BossDoesNotExist();
         if (!bossMetadata[bossId].exists) revert BossMetadataNotSet();
 
@@ -313,7 +313,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     ) public view override returns (string memory) {
         bytes32 bossId = tokenToBoss[tokenId];
         BossMetadata memory metadata = bossMetadata[bossId];
-        
+
         if (!metadata.exists) revert BossMetadataNotSet();
 
         string memory tierName = tierNames[metadata.tier];
@@ -375,7 +375,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     function withdraw() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance == 0) return;
-        
+
         (bool success, ) = owner().call{value: balance}("");
         require(success, "Transfer failed");
     }
