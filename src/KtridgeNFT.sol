@@ -31,8 +31,12 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     // *******************************************
     address public khugaBashAddress;
     uint256 private _tokenIdCounter;
+    uint256 private _burnedTokenCounter;
     mapping(uint256 => bytes32) public tokenToBoss;
-    mapping(address => mapping(bytes32 => uint256)) public playerBossToToken;
+    mapping(address => mapping(bytes32 => uint256))
+        public playerMintedBossToken;
+    mapping(address => mapping(bytes32 => uint256))
+        public playerBurnedBossToken;
     mapping(bytes32 => BossMetadata) public bossMetadata;
     mapping(uint8 => string) public tierNames;
     string private _contractURI;
@@ -185,11 +189,37 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     }
 
     /**
+     * @notice Get the token ID of a player's minted boss token
+     * @param player The address of the player
+     * @param bossId The ID of the boss
+     * @return The token ID of the player's minted boss token
+     */
+    function getPlayerMintedBossToken(
+        address player,
+        bytes32 bossId
+    ) public view returns (uint256) {
+        return playerMintedBossToken[player][bossId];
+    }
+
+    /**
+     * @notice Get the token ID of a player's burned boss token
+     * @param player The address of the player
+     * @param bossId The ID of the boss
+     * @return The token ID of the player's burned boss token
+     */
+    function getPlayerBurnedBossToken(
+        address player,
+        bytes32 bossId
+    ) public view returns (uint256) {
+        return playerBurnedBossToken[player][bossId];
+    }
+
+    /**
      * @notice Get the total supply of tokens
      * @return The total supply of tokens
      */
     function totalSupply() public view returns (uint256) {
-        return _tokenIdCounter;
+        return _tokenIdCounter - _burnedTokenCounter;
     }
 
     // *******************************************
@@ -214,11 +244,10 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     ) external onlyKhugaBash returns (uint256) {
         if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId)) 
             revert BossDoesNotExist();
-        if (!bossMetadata[bossId].exists) 
-            revert BossMetadataNotSet();
+        if (!bossMetadata[bossId].exists) revert BossMetadataNotSet();
 
         // Check if player already has a Ktridge for this boss
-        uint256 existingToken = playerBossToToken[player][bossId];
+        uint256 existingToken = playerMintedBossToken[player][bossId];
         if (existingToken != 0) {
             return existingToken;
         }
@@ -231,7 +260,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
 
         // Record token information
         tokenToBoss[tokenId] = bossId;
-        playerBossToToken[player][bossId] = tokenId;
+        playerMintedBossToken[player][bossId] = tokenId;
 
         emit KtridgeMinted(player, bossId, tokenId);
 
@@ -247,7 +276,8 @@ contract KtridgeNFT is ERC721, Ownable2Step {
 
         // Only token owner or approved address can burn
         if (
-            tokenOwner != msg.sender && !_isApprovedOrOwner(msg.sender, tokenId)
+            tokenOwner != msg.sender &&
+            !isApprovedForAll(tokenOwner, msg.sender)
         ) {
             revert NotAuthorizedToBurn();
         }
@@ -257,10 +287,13 @@ contract KtridgeNFT is ERC721, Ownable2Step {
 
         // Burn token
         _burn(tokenId);
+        _burnedTokenCounter++;
+
+        // record the token as burned
+        playerBurnedBossToken[tokenOwner][bossId] = tokenId;
 
         // Remove token from mappings
         delete tokenToBoss[tokenId];
-        delete playerBossToToken[tokenOwner][bossId];
 
         emit KtridgeBurned(tokenOwner, bossId, tokenId);
     }
