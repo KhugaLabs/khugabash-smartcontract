@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "../lib/solady/src/utils/Initializable.sol";
-import "../lib/solady/src/auth/Ownable.sol";
-import "../lib/solady/src/utils/ReentrancyGuard.sol";
-import "../lib/solady/src/utils/UUPSUpgradeable.sol";
-import "../lib/solady/src/utils/SignatureCheckerLib.sol";
-import "../lib/solady/src/tokens/ERC721.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./KtridgeNFT.sol";
 
 /**
@@ -14,8 +13,13 @@ import "./KtridgeNFT.sol";
  * @dev Main contract for the Khuga Bash game, implementing score system, stat upgrades, and leaderboard
  * @notice This is the zkSync version of the contract, optimized for L2 execution and upgradeable
  */
-contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
-    using SignatureCheckerLib for address;
+contract KhugaBash is
+    Initializable,
+    Ownable2StepUpgradeable,
+    ReentrancyGuard,
+    UUPSUpgradeable
+{
+    using SignatureChecker for address;
 
     // *******************************************
     // *                                         *
@@ -99,8 +103,9 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         _disableInitializers();
     }
 
-    function initialize() public initializer {
-        _initializeOwner(msg.sender);
+    function initialize(address initialOwner) public initializer {
+        __Ownable_init(initialOwner);
+        __UUPSUpgradeable_init();
     }
 
     // *******************************************

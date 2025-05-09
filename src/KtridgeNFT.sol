@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "../lib/solady/src/tokens/ERC721.sol";
-import "../lib/solady/src/auth/Ownable.sol";
-import "../lib/solady/src/utils/Base64.sol";
-import "../lib/solady/src/utils/LibString.sol";
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/utils/Base64.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 interface IBossRegistry {
     function checkBossExists(bytes32 bossId) external view returns (bool);
 }
 
-contract KtridgeNFT is ERC721, Ownable {
+contract KtridgeNFT is ERC721, Ownable2Step {
     // *******************************************
     // *                                         *
     // *                STRUCTS                  *
@@ -74,15 +74,21 @@ contract KtridgeNFT is ERC721, Ownable {
     // *             CONSTRUCTOR                 *
     // *                                         *
     // *******************************************
-    constructor() {
-        _initializeOwner(msg.sender);
-
+    constructor(
+        address initialOwner
+    ) ERC721("Khuga Bash Ktridge", "KTRIDGE") Ownable(initialOwner) {
         // Initialize tier names
         tierNames[0] = "Common";
         tierNames[1] = "Uncommon";
         tierNames[2] = "Rare";
         tierNames[3] = "Epic";
         tierNames[4] = "Legendary";
+
+        emit TierNameSet(0, "Common");
+        emit TierNameSet(1, "Uncommon");
+        emit TierNameSet(2, "Rare");
+        emit TierNameSet(3, "Epic");
+        emit TierNameSet(4, "Legendary");
     }
 
     // *******************************************
@@ -302,7 +308,7 @@ contract KtridgeNFT is ERC721, Ownable {
                         tierName,
                         '"}, ',
                         '{"display_type": "boost_number", "trait_type": "Rarity", "value": ',
-                        LibString.toString(metadata.tier),
+                        Strings.toString(metadata.tier),
                         "}",
                         "]",
                         "}"
