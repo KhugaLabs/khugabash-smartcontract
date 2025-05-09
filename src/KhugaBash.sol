@@ -178,7 +178,7 @@ contract KhugaBash is
         uint256 limit
     ) external view returns (LeaderboardEntry[] memory) {
         uint256 size = playerAddresses.length;
-        
+
         // Cap to the smaller of the requested limit, MAX_LEADERBOARD_SIZE, or actual array size
         uint256 resultSize = size < limit ? size : limit;
         resultSize = resultSize < MAX_LEADERBOARD_SIZE
@@ -198,21 +198,20 @@ contract KhugaBash is
                 score: players[playerAddr].score
             });
         }
-        
-        // Sort using a simple heap sort approach for the top N players
-        // This is more efficient than insertion sort for large arrays
+
+        // Sort using a simple selection sort approach for the top N players
         for (uint256 i = 0; i < resultSize; i++) {
             // Find highest score player among remaining
             uint256 highestIndex = i;
             uint256 highestScore = allPlayers[i].score;
-            
+
             for (uint256 j = i + 1; j < size; j++) {
                 if (allPlayers[j].score > highestScore) {
                     highestIndex = j;
                     highestScore = allPlayers[j].score;
                 }
             }
-            
+
             // Swap if we found a higher score
             if (highestIndex != i) {
                 LeaderboardEntry memory temp = allPlayers[i];
@@ -220,7 +219,7 @@ contract KhugaBash is
                 allPlayers[highestIndex] = temp;
             }
         }
-        
+
         // Create the result array with just the top players
         LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](resultSize);
         for (uint256 i = 0; i < resultSize; i++) {
@@ -394,7 +393,7 @@ contract KhugaBash is
                 playerKilledBosses[msg.sender].push(bossId);
                 bossKillers[bossId].push(msg.sender);
                 playerHasKilledBoss[msg.sender][bossId] = true;
-                
+
                 // Emit event for each boss killed
                 emit BossKilled(msg.sender, bossId);
             }
