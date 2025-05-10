@@ -67,15 +67,15 @@ contract KhugaBash is
     // *                                         *
     // *******************************************// Events
     event PlayerRegistered(address indexed player);
-    event BossKilled(address indexed player, bytes32 indexed bossId);
+    event BossKilled(address indexed player, bytes32 indexed bossId, uint256 timestamp);
     event BossAdded(bytes32 indexed bossId);
     event KtridgeMinted(
         address indexed player,
         bytes32 indexed bossId,
         uint256 tokenId
     );
-    event SyncedData(address indexed player, bytes32[] bosses, uint256 score);
-    event LeaderboardUpdated(address indexed player, uint256 score);
+    event SyncedData(address indexed player, bytes32[] bosses, uint256 score, uint256 timestamp);
+    event LeaderboardUpdated(address indexed player, uint256 score, uint256 timestamp);
     event BackendSignerSet(address indexed backendSigner);
     event KtridgeNFTSet(address indexed ktridgeNFT);
 
@@ -380,7 +380,7 @@ contract KhugaBash is
         ) {
             players[msg.sender].score = score;
             playerLastScoreUpdated[msg.sender] = timestamp;
-            emit LeaderboardUpdated(msg.sender, score);
+            emit LeaderboardUpdated(msg.sender, score, timestamp);
         }
 
         // For each boss that player has not killed, add to player killed bosses
@@ -395,11 +395,11 @@ contract KhugaBash is
                 playerHasKilledBoss[msg.sender][bossId] = true;
 
                 // Emit event for each boss killed
-                emit BossKilled(msg.sender, bossId);
+                emit BossKilled(msg.sender, bossId, timestamp);
             }
         }
 
-        emit SyncedData(msg.sender, _bossIds, score);
+        emit SyncedData(msg.sender, _bossIds, score, timestamp);
     }
 
     /**
