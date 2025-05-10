@@ -277,6 +277,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         // Only token owner or approved address can burn
         if (
             tokenOwner != msg.sender &&
+            getApproved(tokenId) != msg.sender &&
             !isApprovedForAll(tokenOwner, msg.sender)
         ) {
             revert NotAuthorizedToBurn();
