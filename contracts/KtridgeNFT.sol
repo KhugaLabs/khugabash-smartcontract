@@ -19,6 +19,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     struct BossMetadata {
         string name;
         string imageURI;
+        string animationURI;
         string description;
         uint8 tier;
         bool exists;
@@ -126,6 +127,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param bossId The ID of the boss
      * @param bossName The name of the boss
      * @param imageURI The URI of the boss's image
+     * @param animationURI The URI of the boss's animation
      * @param description The description of the boss
      * @param tier The tier of the boss
      */
@@ -133,6 +135,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         bytes32 bossId,
         string calldata bossName,
         string calldata imageURI,
+        string calldata animationURI,
         string calldata description,
         uint8 tier
     ) external onlyOwner {
@@ -144,6 +147,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         bossMetadata[bossId] = BossMetadata({
             name: bossName,
             imageURI: imageURI,
+            animationURI: animationURI,
             description: description,
             tier: tier,
             exists: true
@@ -332,6 +336,9 @@ contract KtridgeNFT is ERC721, Ownable2Step {
                         '", ',
                         '"image": "',
                         metadata.imageURI,
+                        '", ',
+                        '"animation_url": "',
+                        metadata.animationURI,
                         '", ',
                         '"attributes": [',
                         '{"trait_type": "Boss", "value": "',
