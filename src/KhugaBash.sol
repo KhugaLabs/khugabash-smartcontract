@@ -27,6 +27,12 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
         bool isRegistered;
     }
 
+    struct PlayerStats {
+        uint256 score;
+        bool isRegistered;
+        bytes32[] killedBosses;
+    }
+
     struct LeaderboardEntry {
         address player;
         uint256 score;
@@ -140,13 +146,19 @@ contract KhugaBash is Initializable, Ownable, ReentrancyGuard, UUPSUpgradeable {
     /**
      * @notice Get the stats of a player
      * @param player The address of the player
-     * @return The stats of the player
+     * @return The stats of the player including killed bosses
      */
     function getPlayerStats(
         address player
-    ) external view returns (Player memory) {
+    ) external view returns (PlayerStats memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
-        return players[player];
+
+        return
+            PlayerStats({
+                score: players[player].score,
+                isRegistered: players[player].isRegistered,
+                killedBosses: playerKilledBosses[player]
+            });
     }
 
     /**
