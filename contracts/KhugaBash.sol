@@ -8,24 +8,13 @@ import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./KtridgeNFT.sol";
 
-/**
- * @title KhugaBash
- * @dev Main contract for the Khuga Bash game, implementing score system, stat upgrades, and leaderboard
- * @notice This is the zkSync version of the contract, optimized for L2 execution and upgradeable
- */
-contract KhugaBash is
-    Initializable,
-    Ownable2StepUpgradeable,
-    ReentrancyGuard,
-    UUPSUpgradeable
-{
+contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, UUPSUpgradeable {
     using SignatureChecker for address;
 
-    // *******************************************
-    // *                                         *
-    // *               STRUCTS                   *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // STRUCTS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     struct Player {
         uint256 score;
         bool isRegistered;
@@ -36,54 +25,65 @@ contract KhugaBash is
         uint256 score;
     }
 
-    // *******************************************
-    // *                                         *
-    // *           STATE VARIABLES               *
-    // *                                         *
-    // *******************************************
+    struct Quest {
+        bytes32 id;
+        string name;
+        string description;
+        uint256 rewardAmount;
+        bool isActive;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // STATE VARIABLES
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     address public backendSigner;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
-
-    address[] private playerAddresses;
-    mapping(address => Player) private players;
-    mapping(bytes32 => bool) private usedSignatures;
-
-    bytes32[] private allBosses;
-    mapping(bytes32 => bool) private bossExists;
-
-    mapping(bytes32 => address[]) private bossKillers;
-    mapping(address => bytes32[]) private playerKilledBosses;
-
     KtridgeNFT public ktridgeNFT;
 
-    mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
-    mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
-
+    // Player data
+    address[] private playerAddresses;
+    mapping(address => Player) private players;
     mapping(address => uint256) private playerLastScoreUpdated;
 
-    // *******************************************
-    // *                                         *
-    // *                EVENTS                   *
-    // *                                         *
-    // *******************************************// Events
+    // Signature management
+    mapping(bytes32 => bool) private usedSignatures;
+
+    // Boss system
+    bytes32[] private allBosses;
+    mapping(bytes32 => bool) private bossExists;
+    mapping(bytes32 => address[]) private bossKillers;
+    mapping(address => bytes32[]) private playerKilledBosses;
+    mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
+    mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
+
+    // Quest system
+    bytes32[] private allQuests;
+    mapping(bytes32 => Quest) private quests;
+    mapping(bytes32 => bool) private questExists;
+    mapping(address => bytes32[]) private playerCompletedQuests;
+    mapping(address => mapping(bytes32 => bool)) private playerHasCompletedQuest;
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // EVENTS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     event PlayerRegistered(address indexed player);
     event BossKilled(address indexed player, bytes32 indexed bossId);
     event BossAdded(bytes32 indexed bossId);
-    event KtridgeMinted(
-        address indexed player,
-        bytes32 indexed bossId,
-        uint256 tokenId
-    );
+    event KtridgeMinted(address indexed player, bytes32 indexed bossId, uint256 tokenId);
     event SyncedData(address indexed player, bytes32[] bosses, uint256 score);
     event LeaderboardUpdated(address indexed player, uint256 score);
     event BackendSignerSet(address indexed backendSigner);
     event KtridgeNFTSet(address indexed ktridgeNFT);
+    event QuestAdded(bytes32 indexed questId, string name, uint256 rewardAmount);
+    event QuestCompleted(address indexed player, bytes32 indexed questId, uint256 rewardAmount);
+    event QuestUpdated(bytes32 indexed questId, bool isActive);
 
-    // *******************************************
-    // *                                         *
-    // *                ERRORS                   *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // ERRORS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     error PlayerAlreadyRegistered();
     error BossesNotSet();
     error InvalidBosses();
@@ -96,13 +96,21 @@ contract KhugaBash is
     error InvalidBossId();
     error BossAlreadyExists();
     error KtridgeAlreadyClaimed();
-    error InvalidOwner();
     error InvalidBackendSigner();
     error InvalidKtridgeNFTAddress();
+    error QuestNotExists();
+    error QuestAlreadyExists();
+    error QuestAlreadyCompleted();
+    error InvalidQuestId();
+    error QuestNotActive();
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // CONSTRUCTOR & INITIALIZATION
+    // ═══════════════════════════════════════════════════════════════════════════════════
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
+    constructor() { 
+        _disableInitializers(); 
     }
 
     function initialize(address initialOwner) public initializer {
@@ -110,15 +118,31 @@ contract KhugaBash is
         __UUPSUpgradeable_init();
     }
 
-    // *******************************************
-    // *                                         *
-    // *            ADMIN FUNCTIONS              *
-    // *                                         *
-    // *******************************************
-    /**
-     * @notice Admin functions section
-     * @param _backendSigner The address of the backend signer
-     */
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // MODIFIERS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    modifier onlyRegisteredPlayer() {
+        if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
+        _;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // INTERNAL FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function _verifySignature(bytes calldata signature, bytes32 messageHash) internal {
+        if (backendSigner == address(0)) revert InvalidBackendSigner();
+        bytes32 signatureHash = keccak256(signature);
+        if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
+        if (!SignatureChecker.isValidSignatureNow(backendSigner, messageHash, signature)) revert InvalidSignature();
+        usedSignatures[signatureHash] = true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     function setBackendSigner(address _backendSigner) external onlyOwner {
         if (_backendSigner == address(0)) revert InvalidBackendSigner();
         if (backendSigner != _backendSigner) {
@@ -127,10 +151,6 @@ contract KhugaBash is
         }
     }
 
-    /**
-     * @notice Sets the Ktridge NFT contract address
-     * @param _ktridgeNFT The address of the Ktridge NFT contract
-     */
     function setKtridgeNFT(address _ktridgeNFT) external onlyOwner {
         if (_ktridgeNFT == address(0)) revert InvalidKtridgeNFTAddress();
         if (address(ktridgeNFT) != _ktridgeNFT) {
@@ -139,81 +159,96 @@ contract KhugaBash is
         }
     }
 
-    /**
-     * @notice Adds a new boss to the game
-     * @param bossId The ID of the boss to add
-     */
     function addBoss(bytes32 bossId) external onlyOwner {
         if (bossId == bytes32(0)) revert InvalidBossId();
         if (bossExists[bossId]) revert BossAlreadyExists();
-
         bossExists[bossId] = true;
         allBosses.push(bossId);
-
         emit BossAdded(bossId);
     }
 
-    // *******************************************
-    // *                                         *
-    // *            READ FUNCTIONS               *
-    // *                                         *
-    // *******************************************
-    /**
-     * @notice Get the stats of a player
-     * @param player The address of the player
-     * @return The stats of the player
-     */
-    function getPlayerStats(
-        address player
-    ) external view returns (Player memory) {
+    function addQuest(
+        bytes32 questId, 
+        string calldata name, 
+        string calldata description, 
+        uint256 rewardAmount
+    ) external onlyOwner {
+        if (questId == bytes32(0)) revert InvalidQuestId();
+        if (questExists[questId]) revert QuestAlreadyExists();
+        quests[questId] = Quest(questId, name, description, rewardAmount, true);
+        questExists[questId] = true;
+        allQuests.push(questId);
+        emit QuestAdded(questId, name, rewardAmount);
+    }
+
+    function updateQuestStatus(bytes32 questId, bool isActive) external onlyOwner {
+        if (!questExists[questId]) revert QuestNotExists();
+        quests[questId].isActive = isActive;
+        emit QuestUpdated(questId, isActive);
+    }
+
+    function resetAllPlayersScore() external onlyOwner {
+        uint256 currentTimestamp = block.timestamp;
+        for (uint256 i = 0; i < playerAddresses.length; i++) {
+            address playerAddr = playerAddresses[i];
+            if (players[playerAddr].score > 0) {
+                players[playerAddr].score = 0;
+                playerLastScoreUpdated[playerAddr] = currentTimestamp;
+                emit LeaderboardUpdated(playerAddr, 0);
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // VIEW FUNCTIONS - PLAYER DATA
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function getPlayerStats(address player) external view returns (Player memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
         return players[player];
     }
 
-    /**
-     * @notice Get the top players
-     * @param limit The limit of players to get
-     * @return The top players
-     */
-    function getTopPlayers(
-        uint256 limit
-    ) external view returns (LeaderboardEntry[] memory) {
+    function getPlayerLastScoreUpdated(address player) external view returns (uint256) {
+        if (!players[player].isRegistered) revert PlayerNotRegistered();
+        return playerLastScoreUpdated[player];
+    }
+
+    function getPlayerKilledBosses(address player) external view returns (bytes32[] memory) {
+        if (!players[player].isRegistered) revert PlayerNotRegistered();
+        return playerKilledBosses[player];
+    }
+
+    function getPlayerCompletedQuests(address player) external view returns (bytes32[] memory) {
+        if (!players[player].isRegistered) revert PlayerNotRegistered();
+        return playerCompletedQuests[player];
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // VIEW FUNCTIONS - LEADERBOARD
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function getTopPlayers(uint256 limit) external view returns (LeaderboardEntry[] memory) {
         uint256 size = playerAddresses.length;
-
-        // Cap to the smaller of the requested limit, MAX_LEADERBOARD_SIZE, or actual array size
         uint256 resultSize = size < limit ? size : limit;
-        resultSize = resultSize < MAX_LEADERBOARD_SIZE
-            ? resultSize
-            : MAX_LEADERBOARD_SIZE;
+        if (resultSize > MAX_LEADERBOARD_SIZE) resultSize = MAX_LEADERBOARD_SIZE;
+        if (resultSize == 0) return new LeaderboardEntry[](0);
 
-        if (resultSize == 0) {
-            return new LeaderboardEntry[](0);
-        }
-
-        // Create temporary array of all players to sort
         LeaderboardEntry[] memory allPlayers = new LeaderboardEntry[](size);
         for (uint256 i = 0; i < size; i++) {
             address playerAddr = playerAddresses[i];
-            allPlayers[i] = LeaderboardEntry({
-                player: playerAddr,
-                score: players[playerAddr].score
-            });
+            allPlayers[i] = LeaderboardEntry(playerAddr, players[playerAddr].score);
         }
 
-        // Sort using a simple selection sort approach for the top N players
+        // Sort using selection sort for top N players
         for (uint256 i = 0; i < resultSize; i++) {
-            // Find highest score player among remaining
             uint256 highestIndex = i;
             uint256 highestScore = allPlayers[i].score;
-
             for (uint256 j = i + 1; j < size; j++) {
                 if (allPlayers[j].score > highestScore) {
                     highestIndex = j;
                     highestScore = allPlayers[j].score;
                 }
             }
-
-            // Swap if we found a higher score
             if (highestIndex != i) {
                 LeaderboardEntry memory temp = allPlayers[i];
                 allPlayers[i] = allPlayers[highestIndex];
@@ -221,252 +256,150 @@ contract KhugaBash is
             }
         }
 
-        // Create the result array with just the top players
-        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](
-            resultSize
-        );
+        LeaderboardEntry[] memory topPlayers = new LeaderboardEntry[](resultSize);
         for (uint256 i = 0; i < resultSize; i++) {
             topPlayers[i] = allPlayers[i];
         }
-
         return topPlayers;
     }
 
-    /**
-     * @notice Get all bosses that a player has killed
-     * @param player The address of the player
-     * @return The bosses that the player has killed
-     */
-    function getPlayerKilledBosses(
-        address player
-    ) external view returns (bytes32[] memory) {
-        if (!players[player].isRegistered) revert PlayerNotRegistered();
-        return playerKilledBosses[player];
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // VIEW FUNCTIONS - BOSS SYSTEM
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function getAllBosses() external view returns (bytes32[] memory) { 
+        return allBosses; 
     }
 
-    /**
-     * @notice Get all players that killed a specific boss
-     * @param bossId The ID of the boss
-     * @return The players that killed the boss
-     */
-    function getBossKillers(
-        bytes32 bossId
-    ) external view returns (address[] memory) {
+    function getBossKillers(bytes32 bossId) external view returns (address[] memory) {
         if (!bossExists[bossId]) revert BossNotExists();
         return bossKillers[bossId];
     }
 
-    /**
-     * @notice Get all registered bosses
-     * @return The registered bosses
-     */
-    function getAllBosses() external view returns (bytes32[] memory) {
-        return allBosses;
+    function hasPlayerKilledBoss(address player, bytes32 bossId) public view returns (bool) {
+        return players[player].isRegistered && bossExists[bossId] && playerHasKilledBoss[player][bossId];
     }
 
-    /**
-     * @notice Check if a player has killed a specific boss
-     * @param player The address of the player
-     * @param bossId The ID of the boss
-     * @return The result of the check
-     */
-    function hasPlayerKilledBoss(
-        address player,
-        bytes32 bossId
-    ) public view returns (bool) {
-        if (!players[player].isRegistered || !bossExists[bossId]) return false;
-
-        return playerHasKilledBoss[player][bossId];
+    function checkBossExists(bytes32 bossId) external view returns (bool) { 
+        return bossExists[bossId]; 
     }
 
-    function checkBossExists(bytes32 bossId) external view returns (bool) {
-        return bossExists[bossId];
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // VIEW FUNCTIONS - QUEST SYSTEM
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function getAllQuests() external view returns (bytes32[] memory) { 
+        return allQuests; 
     }
 
-    /**
-     * @notice Get the last time a player's score was updated
-     * @param player The address of the player
-     * @return The timestamp of the last score update
-     */
-    function getPlayerLastScoreUpdated(
-        address player
-    ) external view returns (uint256) {
-        if (!players[player].isRegistered) revert PlayerNotRegistered();
-        return playerLastScoreUpdated[player];
+    function getQuestDetails(bytes32 questId) external view returns (Quest memory) {
+        if (!questExists[questId]) revert QuestNotExists();
+        return quests[questId];
     }
 
-    // *******************************************
-    // *                                         *
-    // *            WRITE FUNCTIONS              *
-    // *                                         *
-    // *******************************************
-    /**
-     * @notice Register a player
-     * @param signature The signature of the player
-     */
+    function hasPlayerCompletedQuest(address player, bytes32 questId) public view returns (bool) {
+        return players[player].isRegistered && questExists[questId] && playerHasCompletedQuest[player][questId];
+    }
+
+    function isQuestActive(bytes32 questId) external view returns (bool) {
+        return questExists[questId] && quests[questId].isActive;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // PLAYER FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
     function registerPlayer(bytes calldata signature) external {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
-        if (backendSigner == address(0)) revert InvalidBackendSigner();
+        bytes32 messageHash = keccak256(abi.encodePacked(bytes4(keccak256("registerPlayer(address)")), msg.sender));
+        _verifySignature(signature, messageHash);
 
-        // check signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                // Add a unique identifier for this function
-                bytes4(keccak256("registerPlayer(address)")),
-                msg.sender
-            )
-        );
-        if (
-            !SignatureChecker.isValidSignatureNow(
-                backendSigner,
-                messageHash,
-                signature
-            )
-        ) revert InvalidSignature();
-
-        players[msg.sender] = Player({score: 0, isRegistered: true});
+        players[msg.sender] = Player(0, true);
         playerAddresses.push(msg.sender);
         playerLastScoreUpdated[msg.sender] = block.timestamp;
-
         emit PlayerRegistered(msg.sender);
     }
 
-    /**
-     * @notice Sync data from the backend
-     * @param _bossIds The IDs of the bosses
-     * @param score The score of the player
-     * @param timestamp The time when the backend signed this data
-     * @param signature The signature of the player
-     */
     function syncData(
-        bytes32[] calldata _bossIds,
-        uint256 score,
-        uint256 timestamp,
+        bytes32[] calldata _bossIds, 
+        uint256 score, 
+        uint256 timestamp, 
         bytes calldata signature
-    ) external nonReentrant {
-        if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
+    ) external nonReentrant onlyRegisteredPlayer {
         if (allBosses.length == 0) revert BossesNotSet();
-        if (backendSigner == address(0)) revert InvalidBackendSigner();
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            bytes4(keccak256("syncData(address,bytes32[],uint256,uint256)")), 
+            msg.sender, 
+            _bossIds, 
+            score, 
+            timestamp
+        ));
+        _verifySignature(signature, messageHash);
 
-        // Verify signature first
-        bytes32 signatureHash = keccak256(signature);
-        if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
-
-        // Check signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                bytes4(
-                    keccak256("syncData(address,bytes32[],uint256,uint256)")
-                ),
-                msg.sender,
-                _bossIds,
-                score,
-                timestamp
-            )
-        );
-        if (
-            !SignatureChecker.isValidSignatureNow(
-                backendSigner,
-                messageHash,
-                signature
-            )
-        ) revert InvalidSignature();
-
-        // Mark signature as used
-        usedSignatures[signatureHash] = true;
-
-        // Update player score only if the timestamp is newer than the last update
-        // and the score is different
-        if (
-            timestamp > playerLastScoreUpdated[msg.sender] &&
-            players[msg.sender].score != score
-        ) {
+        // Update player score if timestamp is newer and score is different
+        if (timestamp > playerLastScoreUpdated[msg.sender] && players[msg.sender].score != score) {
             players[msg.sender].score = score;
             playerLastScoreUpdated[msg.sender] = timestamp;
             emit LeaderboardUpdated(msg.sender, score);
         }
 
-        // For each boss that player has not killed, add to player killed bosses
+        // Process boss kills
         for (uint256 i = 0; i < _bossIds.length; i++) {
             bytes32 bossId = _bossIds[i];
-
             if (!bossExists[bossId]) revert InvalidBosses();
-
             if (!playerHasKilledBoss[msg.sender][bossId]) {
                 playerKilledBosses[msg.sender].push(bossId);
                 bossKillers[bossId].push(msg.sender);
                 playerHasKilledBoss[msg.sender][bossId] = true;
-
-                // Emit event for each boss killed
                 emit BossKilled(msg.sender, bossId);
             }
         }
-
         emit SyncedData(msg.sender, _bossIds, score);
     }
 
-    /**
-     * @notice Mint a Ktridge NFT
-     * @param bossId The ID of the boss
-     * @param signature The signature of the player
-     */
-    function mintKtridge(
-        bytes32 bossId,
-        bytes calldata signature
-    ) external nonReentrant {
-        // Check if player is registered
-        if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
-        if (backendSigner == address(0)) revert InvalidBackendSigner();
+    function mintKtridge(bytes32 bossId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
+        if (hasClaimedKtridge[msg.sender][bossId]) revert KtridgeAlreadyClaimed();
+        if (!hasPlayerKilledBoss(msg.sender, bossId)) revert PlayerNotKilledBossYet();
+        if (address(ktridgeNFT) == address(0)) revert KtridgeSmartContractNotSet();
+        
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            bytes4(keccak256("mintKtridge(address,bytes32)")), 
+            msg.sender, 
+            bossId
+        ));
+        _verifySignature(signature, messageHash);
 
-        // Check if player has already claimed an NFT for this boss
-        if (hasClaimedKtridge[msg.sender][bossId])
-            revert KtridgeAlreadyClaimed();
-
-        // Check if player has killed the boss - use the existing hasPlayerKilledBoss function
-        if (!hasPlayerKilledBoss(msg.sender, bossId))
-            revert PlayerNotKilledBossYet();
-
-        if (address(ktridgeNFT) == address(0))
-            revert KtridgeSmartContractNotSet();
-
-        // Prevent signature reuse
-        bytes32 signatureHash = keccak256(signature);
-        if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
-
-        // check signature
-        bytes32 messageHash = keccak256(
-            abi.encodePacked(
-                // Add a unique identifier for this function
-                bytes4(keccak256("mintKtridge(address,bytes32)")),
-                msg.sender,
-                bossId
-            )
-        );
-        if (
-            !SignatureChecker.isValidSignatureNow(
-                backendSigner,
-                messageHash,
-                signature
-            )
-        ) revert InvalidSignature();
-
-        // Mark signature as used
-        usedSignatures[signatureHash] = true;
-
-        // Mark this boss kill as claimed
         hasClaimedKtridge[msg.sender][bossId] = true;
-
-        // Mint the NFT
         uint256 tokenId = ktridgeNFT.mintKtridge(msg.sender, bossId);
-
         emit KtridgeMinted(msg.sender, bossId, tokenId);
     }
 
-    /**
-     * @notice Required override for UUPS proxy pattern
-     * @param newImplementation The address of the new implementation
-     */
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
-}
+    function claimQuest(bytes32 questId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
+        if (!questExists[questId]) revert QuestNotExists();
+        if (!quests[questId].isActive) revert QuestNotActive();
+        if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
+        
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            bytes4(keccak256("claimQuest(address,bytes32)")), 
+            msg.sender, 
+            questId
+        ));
+        _verifySignature(signature, messageHash);
+
+        playerHasCompletedQuest[msg.sender][questId] = true;
+        playerCompletedQuests[msg.sender].push(questId);
+        
+        Quest memory quest = quests[questId];
+        players[msg.sender].score += quest.rewardAmount;
+        playerLastScoreUpdated[msg.sender] = block.timestamp;
+        
+        emit QuestCompleted(msg.sender, questId, quest.rewardAmount);
+        emit LeaderboardUpdated(msg.sender, players[msg.sender].score);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // UPGRADE FUNCTION
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+} 
