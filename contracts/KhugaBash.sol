@@ -31,6 +31,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         string description;
         uint256 rewardAmount;
         bool isActive;
+        bool isDaily;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -63,6 +64,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     mapping(bytes32 => bool) private questExists;
     mapping(address => bytes32[]) private playerCompletedQuests;
     mapping(address => mapping(bytes32 => bool)) private playerHasCompletedQuest;
+    mapping(address => mapping(bytes32 => uint256)) private playerLastDailyClaimDay;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // EVENTS
@@ -109,8 +111,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // ═══════════════════════════════════════════════════════════════════════════════════
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() { 
-        _disableInitializers(); 
+    constructor() {
+        _disableInitializers();
     }
 
     function initialize(address initialOwner) public initializer {
@@ -122,6 +124,9 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // MODIFIERS
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Modifier to check if the player is registered
+     */
     modifier onlyRegisteredPlayer() {
         if (!players[msg.sender].isRegistered) revert PlayerNotRegistered();
         _;
@@ -131,6 +136,11 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // INTERNAL FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Internal function to verify the signature
+     * @param signature The signature to verify
+     * @param messageHash The message hash to verify
+     */
     function _verifySignature(bytes calldata signature, bytes32 messageHash) internal {
         if (backendSigner == address(0)) revert InvalidBackendSigner();
         bytes32 signatureHash = keccak256(signature);
@@ -143,6 +153,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Set the backend signer
+     * @param _backendSigner The address of the backend signer
+     */
     function setBackendSigner(address _backendSigner) external onlyOwner {
         if (_backendSigner == address(0)) revert InvalidBackendSigner();
         if (backendSigner != _backendSigner) {
@@ -151,6 +165,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         }
     }
 
+    /**
+     * @notice Set the KtridgeNFT contract
+     * @param _ktridgeNFT The address of the KtridgeNFT contract
+     */
     function setKtridgeNFT(address _ktridgeNFT) external onlyOwner {
         if (_ktridgeNFT == address(0)) revert InvalidKtridgeNFTAddress();
         if (address(ktridgeNFT) != _ktridgeNFT) {
@@ -159,6 +177,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         }
     }
 
+    /**
+     * @notice Add a boss
+     * @param bossId The ID of the boss
+     */
     function addBoss(bytes32 bossId) external onlyOwner {
         if (bossId == bytes32(0)) revert InvalidBossId();
         if (bossExists[bossId]) revert BossAlreadyExists();
@@ -167,26 +189,37 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         emit BossAdded(bossId);
     }
 
-    function addQuest(
-        bytes32 questId, 
-        string calldata name, 
-        string calldata description, 
-        uint256 rewardAmount
-    ) external onlyOwner {
+    /**
+     * @notice Add a quest
+     * @param questId The ID of the quest
+     * @param name The name of the quest
+     * @param description The description of the quest
+     * @param rewardAmount The reward amount of the quest
+     * @param isDaily Whether the quest is daily
+     */
+    function addQuest(bytes32 questId, string calldata name, string calldata description, uint256 rewardAmount, bool isDaily) external onlyOwner {
         if (questId == bytes32(0)) revert InvalidQuestId();
         if (questExists[questId]) revert QuestAlreadyExists();
-        quests[questId] = Quest(questId, name, description, rewardAmount, true);
+        quests[questId] = Quest(questId, name, description, rewardAmount, true, isDaily);
         questExists[questId] = true;
         allQuests.push(questId);
         emit QuestAdded(questId, name, rewardAmount);
     }
 
+    /**
+     * @notice Update the status of a quest
+     * @param questId The ID of the quest
+     * @param isActive Whether the quest is active
+     */
     function updateQuestStatus(bytes32 questId, bool isActive) external onlyOwner {
         if (!questExists[questId]) revert QuestNotExists();
         quests[questId].isActive = isActive;
         emit QuestUpdated(questId, isActive);
     }
 
+    /**
+     * @notice Reset the score of all players
+     */
     function resetAllPlayersScore() external onlyOwner {
         uint256 currentTimestamp = block.timestamp;
         for (uint256 i = 0; i < playerAddresses.length; i++) {
@@ -203,30 +236,82 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // VIEW FUNCTIONS - PLAYER DATA
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Get the stats of a player
+     * @param player The address of the player
+     * @return The stats of the player
+     */
     function getPlayerStats(address player) external view returns (Player memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
         return players[player];
     }
 
+    /**
+     * @notice Get the last score updated of a player
+     * @param player The address of the player
+     * @return The last score updated of the player
+     */
     function getPlayerLastScoreUpdated(address player) external view returns (uint256) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
         return playerLastScoreUpdated[player];
     }
 
+    /**
+     * @notice Get the bosses killed by a player
+     * @param player The address of the player
+     * @return The bosses killed by the player
+     */
     function getPlayerKilledBosses(address player) external view returns (bytes32[] memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
         return playerKilledBosses[player];
     }
 
+    /**
+     * @notice Get the quests completed by a player
+     * @param player The address of the player
+     * @return The quests completed by the player
+     */
     function getPlayerCompletedQuests(address player) external view returns (bytes32[] memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
         return playerCompletedQuests[player];
+    }
+
+    /**
+     * @notice Get the daily quests completed by a player
+     * @param player The address of the player
+     * @return The daily quests completed by the player
+     */
+    function getPlayerCompletedDailyQuests(address player) external view returns (bytes32[] memory) {
+        if (!players[player].isRegistered) revert PlayerNotRegistered();
+
+        bytes32[] memory completedQuests = new bytes32[](allQuests.length);
+        uint256 completedCount = 0;
+
+        for (uint256 i = 0; i < allQuests.length; i++) {
+            bytes32 questId = allQuests[i];
+            // if quest is daily and lastclaim day is today, put to temporary array
+            if (quests[questId].isDaily && block.timestamp / 1 days == playerLastDailyClaimDay[player][questId]) {
+                completedQuests[completedCount] = questId;
+                completedCount++;
+            }
+        }
+
+        bytes32[] memory result = new bytes32[](completedCount);
+        for (uint256 i = 0; i < completedCount; i++) {
+            result[i] = completedQuests[i];
+        }
+        return result;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // VIEW FUNCTIONS - LEADERBOARD
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Get the top players
+     * @param limit The limit of the top players
+     * @return The top players
+     */
     function getTopPlayers(uint256 limit) external view returns (LeaderboardEntry[] memory) {
         uint256 size = playerAddresses.length;
         uint256 resultSize = size < limit ? size : limit;
@@ -239,7 +324,6 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
             allPlayers[i] = LeaderboardEntry(playerAddr, players[playerAddr].score);
         }
 
-        // Sort using selection sort for top N players
         for (uint256 i = 0; i < resultSize; i++) {
             uint256 highestIndex = i;
             uint256 highestScore = allPlayers[i].score;
@@ -267,48 +351,93 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // VIEW FUNCTIONS - BOSS SYSTEM
     // ═══════════════════════════════════════════════════════════════════════════════════
 
-    function getAllBosses() external view returns (bytes32[] memory) { 
-        return allBosses; 
+    /**
+     * @notice Get all bosses
+     * @return All bosses
+     */
+    function getAllBosses() external view returns (bytes32[] memory) {
+        return allBosses;
     }
 
+    /**
+     * @notice Get the killers of a boss
+     * @param bossId The ID of the boss
+     * @return The killers of the boss
+     */
     function getBossKillers(bytes32 bossId) external view returns (address[] memory) {
         if (!bossExists[bossId]) revert BossNotExists();
         return bossKillers[bossId];
     }
 
+    /**
+     * @notice Check if a player has killed a boss
+     * @param player The address of the player
+     * @param bossId The ID of the boss
+     * @return True if the player has killed the boss, false otherwise
+     */
     function hasPlayerKilledBoss(address player, bytes32 bossId) public view returns (bool) {
         return players[player].isRegistered && bossExists[bossId] && playerHasKilledBoss[player][bossId];
     }
 
-    function checkBossExists(bytes32 bossId) external view returns (bool) { 
-        return bossExists[bossId]; 
+    /**
+     * @notice Check if a boss exists
+     * @param bossId The ID of the boss
+     * @return True if the boss exists, false otherwise
+     */
+    function checkBossExists(bytes32 bossId) external view returns (bool) {
+        return bossExists[bossId];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // VIEW FUNCTIONS - QUEST SYSTEM
     // ═══════════════════════════════════════════════════════════════════════════════════
 
-    function getAllQuests() external view returns (bytes32[] memory) { 
-        return allQuests; 
+    /**
+     * @notice Get all quests
+     * @return All quests
+     */
+    function getAllQuests() external view returns (bytes32[] memory) {
+        return allQuests;
     }
 
+    /**
+     * @notice Get the details of a quest
+     * @param questId The ID of the quest
+     * @return The details of the quest
+     */
     function getQuestDetails(bytes32 questId) external view returns (Quest memory) {
         if (!questExists[questId]) revert QuestNotExists();
         return quests[questId];
     }
 
-    function hasPlayerCompletedQuest(address player, bytes32 questId) public view returns (bool) {
-        return players[player].isRegistered && questExists[questId] && playerHasCompletedQuest[player][questId];
-    }
-
+    /**
+     * @notice Check if a quest is active
+     * @param questId The ID of the quest
+     * @return True if the quest is active, false otherwise
+     */
     function isQuestActive(bytes32 questId) external view returns (bool) {
         return questExists[questId] && quests[questId].isActive;
     }
 
+    /**
+     * @notice Check if a player can claim a quest
+     * @param player The address of the player
+     * @param questId The ID of the quest
+     * @return True if the player can claim the quest, false otherwise
+     */
+    function canClaimQuest(address player, bytes32 questId) external view returns (bool) {
+        if (!players[player].isRegistered || !questExists[questId] || !quests[questId].isActive) return false;
+        return quests[questId].isDaily ? block.timestamp / 1 days > playerLastDailyClaimDay[player][questId] : !playerHasCompletedQuest[player][questId];
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════════════
-    // PLAYER FUNCTIONS
+    // WRITE FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Register a player
+     * @param signature The signature of the player
+     */
     function registerPlayer(bytes calldata signature) external {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
         bytes32 messageHash = keccak256(abi.encodePacked(bytes4(keccak256("registerPlayer(address)")), msg.sender));
@@ -320,23 +449,26 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         emit PlayerRegistered(msg.sender);
     }
 
+    /**
+     * @notice Sync the data of a player
+     * @param _bossIds The IDs of the bosses killed by the player
+     * @param score The score of the player
+     * @param timestamp The timestamp of the last score update
+     * @param signature The signature of the player
+     */
     function syncData(
-        bytes32[] calldata _bossIds, 
-        uint256 score, 
-        uint256 timestamp, 
+        bytes32[] calldata _bossIds,
+        uint256 score,
+        uint256 timestamp,
         bytes calldata signature
     ) external nonReentrant onlyRegisteredPlayer {
         if (allBosses.length == 0) revert BossesNotSet();
         bytes32 messageHash = keccak256(abi.encodePacked(
-            bytes4(keccak256("syncData(address,bytes32[],uint256,uint256)")), 
-            msg.sender, 
-            _bossIds, 
-            score, 
-            timestamp
+            bytes4(keccak256("syncData(address,bytes32[],uint256,uint256)")),
+            msg.sender, _bossIds, score, timestamp
         ));
         _verifySignature(signature, messageHash);
 
-        // Update player score if timestamp is newer and score is different
         if (timestamp > playerLastScoreUpdated[msg.sender] && players[msg.sender].score != score) {
             players[msg.sender].score = score;
             playerLastScoreUpdated[msg.sender] = timestamp;
@@ -357,6 +489,11 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         emit SyncedData(msg.sender, _bossIds, score);
     }
 
+    /**
+     * @notice Mint a Ktridge
+     * @param bossId The ID of the boss
+     * @param signature The signature of the player
+     */
     function mintKtridge(bytes32 bossId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
         if (hasClaimedKtridge[msg.sender][bossId]) revert KtridgeAlreadyClaimed();
         if (!hasPlayerKilledBoss(msg.sender, bossId)) revert PlayerNotKilledBossYet();
@@ -374,25 +511,38 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         emit KtridgeMinted(msg.sender, bossId, tokenId);
     }
 
+    /**
+     * @notice Claim a quest
+     * @param questId The ID of the quest
+     * @param signature The signature of the player
+     */
     function claimQuest(bytes32 questId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
         if (!questExists[questId]) revert QuestNotExists();
-        if (!quests[questId].isActive) revert QuestNotActive();
-        if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
         
+        Quest memory quest = quests[questId];
+        if (!quest.isActive) revert QuestNotActive();
+
+        if (quest.isDaily) {
+            if (block.timestamp / 1 days == playerLastDailyClaimDay[msg.sender][questId]) revert QuestAlreadyCompleted();
+        } else {
+            if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
+        }
+
         bytes32 messageHash = keccak256(abi.encodePacked(
-            bytes4(keccak256("claimQuest(address,bytes32)")), 
-            msg.sender, 
-            questId
+            bytes4(keccak256("claimQuest(address,bytes32)")), msg.sender, questId
         ));
         _verifySignature(signature, messageHash);
 
-        playerHasCompletedQuest[msg.sender][questId] = true;
-        playerCompletedQuests[msg.sender].push(questId);
-        
-        Quest memory quest = quests[questId];
+        if (quest.isDaily) {
+            playerLastDailyClaimDay[msg.sender][questId] = block.timestamp / 1 days;
+        } else {
+            playerHasCompletedQuest[msg.sender][questId] = true;
+            playerCompletedQuests[msg.sender].push(questId);
+        }
+
         players[msg.sender].score += quest.rewardAmount;
         playerLastScoreUpdated[msg.sender] = block.timestamp;
-        
+
         emit QuestCompleted(msg.sender, questId, quest.rewardAmount);
         emit LeaderboardUpdated(msg.sender, players[msg.sender].score);
     }
@@ -401,5 +551,9 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // UPGRADE FUNCTION
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    /**
+     * @notice Authorize the upgrade of the contract
+     * @param newImplementation The address of the new implementation
+     */
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 } 

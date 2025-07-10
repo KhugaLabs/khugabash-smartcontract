@@ -11,11 +11,9 @@ interface IBossRegistry {
 }
 
 contract KtridgeNFT is ERC721, Ownable2Step {
-    // *******************************************
-    // *                                         *
-    // *                STRUCTS                  *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // STRUCTS
+    // ═══════════════════════════════════════════════════════════════════════════════════
     struct BossMetadata {
         string name;
         string imageURI;
@@ -25,47 +23,31 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         bool exists;
     }
 
-    // *******************************************
-    // *                                         *
-    // *            STATE VARIABLES              *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // STATE VARIABLES
+    // ═══════════════════════════════════════════════════════════════════════════════════
     address public khugaBashAddress;
     uint256 private _tokenIdCounter;
     uint256 private _burnedTokenCounter;
     mapping(uint256 => bytes32) public tokenToBoss;
-    mapping(address => mapping(bytes32 => uint256))
-        public playerMintedBossToken;
-    mapping(address => mapping(bytes32 => uint256))
-        public playerBurnedBossToken;
+    mapping(address => mapping(bytes32 => uint256)) public playerMintedBossToken;
+    mapping(address => mapping(bytes32 => uint256)) public playerBurnedBossToken;
     mapping(bytes32 => BossMetadata) public bossMetadata;
     mapping(uint8 => string) public tierNames;
     string private _contractURI;
 
-    // *******************************************
-    // *                                         *
-    // *                EVENTS                   *
-    // *                                         *
-    // *******************************************
-    event KtridgeMinted(
-        address indexed player,
-        bytes32 indexed bossId,
-        uint256 tokenId
-    );
-    event KtridgeBurned(
-        address indexed player,
-        bytes32 indexed bossId,
-        uint256 tokenId
-    );
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // EVENTS
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    event KtridgeMinted(address indexed player, bytes32 indexed bossId, uint256 tokenId);
+    event KtridgeBurned(address indexed player, bytes32 indexed bossId, uint256 tokenId);
     event BossMetadataSet(bytes32 indexed bossId);
     event KhugaBashAddressSet(address indexed khugaBashAddress);
     event TierNameSet(uint8 indexed tier, string name);
 
-    // *******************************************
-    // *                                         *
-    // *                ERRORS                   *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // ERRORS
+    // ═══════════════════════════════════════════════════════════════════════════════════
     error InvalidKhugaBashAddress();
     error OnlyKhugaBashCanMint();
     error NotAuthorizedToBurn();
@@ -74,14 +56,10 @@ contract KtridgeNFT is ERC721, Ownable2Step {
     error BossMetadataNotSet();
     error InvalidTier();
 
-    // *******************************************
-    // *                                         *
-    // *             CONSTRUCTOR                 *
-    // *                                         *
-    // *******************************************
-    constructor(
-        address initialOwner
-    ) ERC721("Khuga Bash Ktridge", "KTRIDGE") Ownable(initialOwner) {
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // CONSTRUCTOR
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    constructor(address initialOwner) ERC721("Khuga Bash Ktridge", "KTRIDGE") Ownable(initialOwner) {
         // Initialize tier names
         tierNames[0] = "Common";
         tierNames[1] = "Uncommon";
@@ -96,11 +74,9 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         emit TierNameSet(4, "Legendary");
     }
 
-    // *******************************************
-    // *                                         *
-    // *            ADMIN FUNCTIONS              *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // ADMIN FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
     /**
      * @notice Set the KhugaBash address
      * @param _khugaBashAddress The address of the KhugaBash contract
@@ -131,17 +107,9 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param description The description of the boss
      * @param tier The tier of the boss
      */
-    function setBossMetadata(
-        bytes32 bossId,
-        string calldata bossName,
-        string calldata imageURI,
-        string calldata animationURI,
-        string calldata description,
-        uint8 tier
-    ) external onlyOwner {
+    function setBossMetadata(bytes32 bossId, string calldata bossName, string calldata imageURI, string calldata animationURI, string calldata description, uint8 tier) external onlyOwner {
         if (khugaBashAddress == address(0)) revert KhugaBashAddressNotSet();
-        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId))
-            revert BossDoesNotExist();
+        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId)) revert BossDoesNotExist();
         if (tier > 4) revert InvalidTier();
 
         bossMetadata[bossId] = BossMetadata({
@@ -164,11 +132,9 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         _contractURI = newURI;
     }
 
-    // *******************************************
-    // *                                         *
-    // *            READ FUNCTIONS               *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // READ FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
     /**
      * @notice Get the tier of a token
      * @param tokenId The ID of the token
@@ -185,9 +151,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param tokenId The ID of the token
      * @return The display name of the token's tier
      */
-    function getTierNameOfToken(
-        uint256 tokenId
-    ) public view returns (string memory) {
+    function getTierNameOfToken(uint256 tokenId) public view returns (string memory) {
         uint8 tier = getTierOfToken(tokenId);
         return tierNames[tier];
     }
@@ -198,10 +162,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param bossId The ID of the boss
      * @return The token ID of the player's minted boss token
      */
-    function getPlayerMintedBossToken(
-        address player,
-        bytes32 bossId
-    ) public view returns (uint256) {
+    function getPlayerMintedBossToken(address player, bytes32 bossId) public view returns (uint256) {
         return playerMintedBossToken[player][bossId];
     }
 
@@ -211,10 +172,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param bossId The ID of the boss
      * @return The token ID of the player's burned boss token
      */
-    function getPlayerBurnedBossToken(
-        address player,
-        bytes32 bossId
-    ) public view returns (uint256) {
+    function getPlayerBurnedBossToken(address player, bytes32 bossId) public view returns (uint256) {
         return playerBurnedBossToken[player][bossId];
     }
 
@@ -226,11 +184,9 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         return _tokenIdCounter - _burnedTokenCounter;
     }
 
-    // *******************************************
-    // *                                         *
-    // *            WRITE FUNCTIONS              *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // WRITE FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════════════════════════
     modifier onlyKhugaBash() {
         if (msg.sender != khugaBashAddress) revert OnlyKhugaBashCanMint();
         _;
@@ -242,12 +198,8 @@ contract KtridgeNFT is ERC721, Ownable2Step {
      * @param bossId The ID of the boss
      * @return The ID of the minted token
      */
-    function mintKtridge(
-        address player,
-        bytes32 bossId
-    ) external onlyKhugaBash returns (uint256) {
-        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId))
-            revert BossDoesNotExist();
+    function mintKtridge(address player, bytes32 bossId) external onlyKhugaBash returns (uint256) {
+        if (!IBossRegistry(khugaBashAddress).checkBossExists(bossId)) revert BossDoesNotExist();
         if (!bossMetadata[bossId].exists) revert BossMetadataNotSet();
 
         // Check if player already has a Ktridge for this boss
@@ -279,10 +231,7 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         address tokenOwner = _ownerOf(tokenId);
 
         // Only token owner or approved address can burn
-        if (
-            tokenOwner != msg.sender &&
-            !isApprovedForAll(tokenOwner, msg.sender)
-        ) {
+        if (tokenOwner != msg.sender && !isApprovedForAll(tokenOwner, msg.sender)) {
             revert NotAuthorizedToBurn();
         }
 
@@ -302,19 +251,15 @@ contract KtridgeNFT is ERC721, Ownable2Step {
         emit KtridgeBurned(tokenOwner, bossId, tokenId);
     }
 
-    // *******************************************
-    // *                                         *
-    // *            ON-CHAIN METADATA            *
-    // *                                         *
-    // *******************************************
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // ON-CHAIN METADATA
+    // ═══════════════════════════════════════════════════════════════════════════════════
     /**
      * @notice Get the token URI of a token
      * @param tokenId The ID of the token
      * @return The URI of the token
      */
-    function tokenURI(
-        uint256 tokenId
-    ) public view override returns (string memory) {
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
         bytes32 bossId = tokenToBoss[tokenId];
         BossMetadata memory metadata = bossMetadata[bossId];
 
