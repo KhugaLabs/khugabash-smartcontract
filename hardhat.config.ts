@@ -1,12 +1,14 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@matterlabs/hardhat-zksync";
+import "@matterlabs/hardhat-zksync-verify";
 
 const config: HardhatUserConfig = {
   zksolc: {
-    version: "latest",
+    version: "1.5.15",
     settings: {
       // find all available options in the official documentation
       // https://docs.zksync.io/build/tooling/hardhat/hardhat-zksync-solc#configuration
+      codegen: "evmla", // Use EVM legacy assembly to match solc default behavior
     },
   },
   defaultNetwork: "abstractTestnet",

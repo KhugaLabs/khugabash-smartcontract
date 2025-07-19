@@ -32,6 +32,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         uint256 rewardAmount;
         bool isActive;
         bool isDaily;
+        string imageUrl;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -40,25 +41,23 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
 
     address public backendSigner;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
-    KtridgeNFT public ktridgeNFT;
 
-    // Player data
     address[] private playerAddresses;
     mapping(address => Player) private players;
-    mapping(address => uint256) private playerLastScoreUpdated;
-
-    // Signature management
     mapping(bytes32 => bool) private usedSignatures;
 
-    // Boss system
     bytes32[] private allBosses;
     mapping(bytes32 => bool) private bossExists;
     mapping(bytes32 => address[]) private bossKillers;
     mapping(address => bytes32[]) private playerKilledBosses;
-    mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
-    mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
 
-    // Quest system
+    KtridgeNFT public ktridgeNFT;
+    
+    mapping(address => mapping(bytes32 => bool)) private hasClaimedKtridge;
+    mapping(address => mapping(bytes32 => bool)) private playerHasKilledBoss;
+
+    mapping(address => uint256) private playerLastScoreUpdated;
+
     bytes32[] private allQuests;
     mapping(bytes32 => Quest) private quests;
     mapping(bytes32 => bool) private questExists;
@@ -79,8 +78,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     event BackendSignerSet(address indexed backendSigner);
     event KtridgeNFTSet(address indexed ktridgeNFT);
     event QuestAdded(bytes32 indexed questId, string name, uint256 rewardAmount);
-    event QuestCompleted(address indexed player, bytes32 indexed questId, uint256 rewardAmount);
-    event QuestUpdated(bytes32 indexed questId, bool isActive);
+    event QuestClaimed(address indexed player, bytes32 indexed questId, uint256 rewardAmount);
+    event QuestUpdated(bytes32 indexed questId, string name, string description, uint256 rewardAmount, bool isDaily, string imageUrl);
+    event QuestStatusUpdated(bytes32 indexed questId, bool isActive);
+    event ResetAllPlayersScore();
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -197,13 +198,33 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
      * @param rewardAmount The reward amount of the quest
      * @param isDaily Whether the quest is daily
      */
-    function addQuest(bytes32 questId, string calldata name, string calldata description, uint256 rewardAmount, bool isDaily) external onlyOwner {
+    function addQuest(bytes32 questId, string calldata name, string calldata description, uint256 rewardAmount, bool isDaily, string calldata imageUrl) external onlyOwner {
         if (questId == bytes32(0)) revert InvalidQuestId();
         if (questExists[questId]) revert QuestAlreadyExists();
-        quests[questId] = Quest(questId, name, description, rewardAmount, true, isDaily);
+        quests[questId] = Quest(questId, name, description, rewardAmount, true, isDaily, imageUrl);
         questExists[questId] = true;
         allQuests.push(questId);
         emit QuestAdded(questId, name, rewardAmount);
+    }
+
+    /**
+     * @notice Update a quest
+     * @param questId The ID of the quest
+     * @param name The name of the quest
+     * @param description The description of the quest
+     * @param rewardAmount The reward amount of the quest
+     * @param isDaily Whether the quest is daily
+     * @param imageUrl The image URL of the quest
+     */
+    function updateQuest(bytes32 questId, string calldata name, string calldata description, uint256 rewardAmount, bool isDaily, string calldata imageUrl) external onlyOwner {
+        if (!questExists[questId]) revert QuestNotExists();
+        Quest storage quest = quests[questId];
+        quest.name = name;
+        quest.description = description;
+        quest.rewardAmount = rewardAmount;
+        quest.isDaily = isDaily;
+        quest.imageUrl = imageUrl;
+        emit QuestUpdated(questId, name, description, rewardAmount, isDaily, imageUrl);
     }
 
     /**
@@ -214,7 +235,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     function updateQuestStatus(bytes32 questId, bool isActive) external onlyOwner {
         if (!questExists[questId]) revert QuestNotExists();
         quests[questId].isActive = isActive;
-        emit QuestUpdated(questId, isActive);
+        emit QuestStatusUpdated(questId, isActive);
     }
 
     /**
@@ -227,9 +248,16 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
             if (players[playerAddr].score > 0) {
                 players[playerAddr].score = 0;
                 playerLastScoreUpdated[playerAddr] = currentTimestamp;
-                emit LeaderboardUpdated(playerAddr, 0);
+                playerCompletedQuests[playerAddr] = new bytes32[](0);
+                playerKilledBosses[playerAddr] = new bytes32[](0);
+                for (uint256 j = 0; j < allQuests.length; j++) {
+                    bytes32 questId = allQuests[j];
+                    playerHasCompletedQuest[playerAddr][questId] = false;
+                    playerLastDailyClaimDay[playerAddr][questId] = 0;
+                }
             }
         }
+        emit ResetAllPlayersScore();
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -271,35 +299,40 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
      * @param player The address of the player
      * @return The quests completed by the player
      */
-    function getPlayerCompletedQuests(address player) external view returns (bytes32[] memory) {
-        if (!players[player].isRegistered) revert PlayerNotRegistered();
-        return playerCompletedQuests[player];
-    }
-
-    /**
-     * @notice Get the daily quests completed by a player
-     * @param player The address of the player
-     * @return The daily quests completed by the player
-     */
-    function getPlayerCompletedDailyQuests(address player) external view returns (bytes32[] memory) {
+    function getPlayerCompletedQuests(address player) external view returns (Quest[] memory) {
         if (!players[player].isRegistered) revert PlayerNotRegistered();
 
-        bytes32[] memory completedQuests = new bytes32[](allQuests.length);
-        uint256 completedCount = 0;
-
+        // Count both non-daily completed quests and daily quests completed today
+        uint256 totalCompleted = playerCompletedQuests[player].length;
+        uint256 currentDay = block.timestamp / 1 days;
+        
+        // Count daily quests completed today
         for (uint256 i = 0; i < allQuests.length; i++) {
             bytes32 questId = allQuests[i];
-            // if quest is daily and lastclaim day is today, put to temporary array
-            if (quests[questId].isDaily && block.timestamp / 1 days == playerLastDailyClaimDay[player][questId]) {
-                completedQuests[completedCount] = questId;
-                completedCount++;
+            if (quests[questId].isDaily && playerLastDailyClaimDay[player][questId] == currentDay) {
+                totalCompleted++;
             }
         }
 
-        bytes32[] memory result = new bytes32[](completedCount);
-        for (uint256 i = 0; i < completedCount; i++) {
-            result[i] = completedQuests[i];
+        Quest[] memory result = new Quest[](totalCompleted);
+        uint256 currentIndex = 0;
+        
+        // Add non-daily completed quests
+        bytes32[] memory completedQuestIds = playerCompletedQuests[player];
+        for (uint256 i = 0; i < completedQuestIds.length; i++) {
+            result[currentIndex] = quests[completedQuestIds[i]];
+            currentIndex++;
         }
+        
+        // Add daily quests completed today
+        for (uint256 i = 0; i < allQuests.length; i++) {
+            bytes32 questId = allQuests[i];
+            if (quests[questId].isDaily && playerLastDailyClaimDay[player][questId] == currentDay) {
+                result[currentIndex] = quests[questId];
+                currentIndex++;
+            }
+        }
+        
         return result;
     }
 
@@ -528,9 +561,17 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
             if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
         }
 
-        bytes32 messageHash = keccak256(abi.encodePacked(
-            bytes4(keccak256("claimQuest(address,bytes32)")), msg.sender, questId
-        ));
+        bytes32 messageHash;
+        if (quest.isDaily) {
+            uint256 currentDay = block.timestamp / 1 days;
+            messageHash = keccak256(abi.encodePacked(
+                bytes4(keccak256("claimQuest(address,bytes32,uint256)")), msg.sender, questId, currentDay
+            ));
+        } else {
+            messageHash = keccak256(abi.encodePacked(
+                bytes4(keccak256("claimQuest(address,bytes32)")), msg.sender, questId
+            ));
+        }
         _verifySignature(signature, messageHash);
 
         if (quest.isDaily) {
@@ -543,7 +584,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         players[msg.sender].score += quest.rewardAmount;
         playerLastScoreUpdated[msg.sender] = block.timestamp;
 
-        emit QuestCompleted(msg.sender, questId, quest.rewardAmount);
+        emit QuestClaimed(msg.sender, questId, quest.rewardAmount);
         emit LeaderboardUpdated(msg.sender, players[msg.sender].score);
     }
 
