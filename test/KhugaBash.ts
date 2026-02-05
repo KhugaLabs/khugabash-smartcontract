@@ -55,6 +55,47 @@ describe("KhugaBash", function () {
         ).to.be.revertedWithCustomError(khugaBash, "OwnableUnauthorizedAccount");
     });
 
+    it("should allow owner to set withdrawal address", async function () {
+        const withdrawalAddr = backend.address;
+        await expect(khugaBash.setWithdrawalAddress(withdrawalAddr))
+            .to.emit(khugaBash, "WithdrawalAddressSet")
+            .withArgs(withdrawalAddr);
+    });
+
+    it("should revert setting withdrawal address to zero", async function () {
+        await expect(
+            khugaBash.setWithdrawalAddress(ethers.ZeroAddress)
+        ).to.be.revertedWithCustomError(khugaBash, "InvalidWithdrawalAddress");
+    });
+
+    it("should withdraw to designated address", async function () {
+        // Send ETH to contract
+        await owner.sendTransaction({
+            to: await khugaBash.getAddress(),
+            value: ethers.parseEther("1.0")
+        });
+
+        const withdrawalAddr = backend.address;
+        await khugaBash.setWithdrawalAddress(withdrawalAddr);
+
+        const initialBalance = await ethers.provider.getBalance(withdrawalAddr);
+        await khugaBash.withdrawFunds();
+        const finalBalance = await ethers.provider.getBalance(withdrawalAddr);
+
+        expect(finalBalance - initialBalance).to.equal(ethers.parseEther("1.0"));
+    });
+
+    it("should revert withdrawal from non-owner", async function () {
+        await owner.sendTransaction({
+            to: await khugaBash.getAddress(),
+            value: ethers.parseEther("1.0")
+        });
+
+        await expect(
+            khugaBash.connect(user).withdrawFunds()
+        ).to.be.revertedWithCustomError(khugaBash, "OwnableUnauthorizedAccount");
+    });
+
     describe("EIP-712 Signature Security", function () {
         const EIP712_DOMAIN = {
             name: "KhugaBash",

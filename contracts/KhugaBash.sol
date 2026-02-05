@@ -66,6 +66,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     mapping(address => mapping(bytes32 => uint256)) private playerLastDailyClaimDay;
 
     uint256 public claimQuestFee;
+    address public withdrawalAddress;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // EIP-712 DOMAIN
@@ -117,6 +118,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     event ResetAllPlayersScore();
     event ClaimQuestFeeUpdated(uint256 oldFee, uint256 newFee);
     event FundsWithdrawn(address indexed to, uint256 amount);
+    event WithdrawalAddressSet(address indexed withdrawalAddress);
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -143,6 +145,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     error QuestNotActive();
     error InsufficientClaimFee();
     error NoFundsToWithdraw();
+    error InvalidWithdrawalAddress();
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR & INITIALIZATION
@@ -354,14 +357,29 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     }
 
     /**
-     * @notice Withdraw accumulated ETH from claim fees to the owner
+     * @notice Set the withdrawal address for claim fees
+     * @param _withdrawalAddress The address to withdraw funds to
+     */
+    function setWithdrawalAddress(address _withdrawalAddress) external onlyOwner {
+        if (_withdrawalAddress == address(0)) revert InvalidWithdrawalAddress();
+        if (withdrawalAddress != _withdrawalAddress) {
+            withdrawalAddress = _withdrawalAddress;
+            emit WithdrawalAddressSet(_withdrawalAddress);
+        }
+    }
+
+    /**
+     * @notice Withdraw accumulated ETH from claim fees
      */
     function withdrawFunds() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NoFundsToWithdraw();
-        (bool success, ) = payable(owner()).call{value: balance}("");
+
+        // Withdraw to designated address, fallback to owner if not set
+        address recipient = withdrawalAddress != address(0) ? withdrawalAddress : owner();
+        (bool success, ) = payable(recipient).call{value: balance}("");
         require(success, "Withdrawal failed");
-        emit FundsWithdrawn(owner(), balance);
+        emit FundsWithdrawn(recipient, balance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -704,6 +722,11 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @param newImplementation The address of the new implementation
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    /**
+     * @notice Accept ETH transfers
+     */
+    receive() external payable {}
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // STORAGE GAP FOR UUPS UPGRADEABILITY
