@@ -66,19 +66,16 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     mapping(address => mapping(bytes32 => uint256)) private playerLastDailyClaimDay;
 
     uint256 public claimQuestFee;
-    address public withdrawalAddress;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
-    // EIP-712 DOMAIN
+    // EIP-712 DOMAIN (constants don't use storage)
     // ═══════════════════════════════════════════════════════════════════════════════════
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
 
-    bytes32 private DOMAIN_SEPARATOR;
-
-    // Type hashes for each function
+    // Type hashes for each function (constants don't use storage)
     bytes32 private constant REGISTER_PLAYER_TYPEHASH = keccak256(
         "RegisterPlayer(address player)"
     );
@@ -161,17 +158,6 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         __UUPSUpgradeable_init();
         __ReentrancyGuard_init();
         claimQuestFee = 0.00001 ether;
-
-        // Initialize EIP-712 domain separator
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                EIP712_DOMAIN_TYPEHASH,
-                keccak256(bytes("KhugaBash")),
-                keccak256(bytes("1")),
-                block.chainid,
-                address(this)
-            )
-        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -206,7 +192,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
 
         // Create EIP-712 compliant message hash
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", _getDomainSeparator(), structHash));
 
         // Verify signature using ECDSA.recover
         address signer = messageHash.recover(signature);
@@ -215,6 +201,22 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         }
 
         usedSignatures[signatureHash] = true;
+    }
+
+    /**
+     * @notice Get the EIP-712 domain separator
+     * @return The EIP-712 domain separator
+     */
+    function _getDomainSeparator() private view returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH,
+                keccak256(bytes("KhugaBash")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     /**
@@ -232,7 +234,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @return The recovered signer address
      */
     function debugVerifySignature(bytes calldata signature, bytes32 structHash) external view returns (address) {
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", _getDomainSeparator(), structHash));
         return messageHash.recover(signature);
     }
 
@@ -727,6 +729,13 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @notice Accept ETH transfers
      */
     receive() external payable {}
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // NEW STATE VARIABLES (MUST BE AT END FOR STORAGE COMPATIBILITY)
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    // Designated withdrawal address (MUST be last variable before gap)
+    address public withdrawalAddress;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // STORAGE GAP FOR UUPS UPGRADEABILITY

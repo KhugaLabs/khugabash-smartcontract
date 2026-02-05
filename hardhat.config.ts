@@ -28,7 +28,8 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
-      abstractTestnet: "TACK2D1RGYX9U7MC31SZWWQ7FCWRYQ96AD",
+      // abstractTestnet: "TACK2D1RGYX9U7MC31SZWWQ7FCWRYQ96AD",
+      abstractTestnet: "36GG3I5AJ9XM874CX5B45JIZREV1FC7IM5",
       abstractMainnet: "IEYKU3EEM5XCD76N7Y7HF9HG7M9ARZ2H4A",
     },
     customChains: [
@@ -36,7 +37,7 @@ const config: HardhatUserConfig = {
         network: "abstractTestnet",
         chainId: 11124,
         urls: {
-          apiURL: "https://api-sepolia.abscan.org/api",
+          apiURL: "https://api.etherscan.io/v2/api",
           browserURL: "https://sepolia.abscan.org/",
         },
       },
@@ -44,7 +45,7 @@ const config: HardhatUserConfig = {
         network: "abstractMainnet",
         chainId: 2741,
         urls: {
-          apiURL: "https://api.abscan.org/api",
+          apiURL: "https://api.etherscan.io/v2/api",
           browserURL: "https://abscan.org/",
         },
       },
