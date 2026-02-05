@@ -96,6 +96,40 @@ describe("KhugaBash", function () {
         ).to.be.revertedWithCustomError(khugaBash, "OwnableUnauthorizedAccount");
     });
 
+    it("should fallback to owner when withdrawal address not set", async function () {
+        await owner.sendTransaction({
+            to: await khugaBash.getAddress(),
+            value: ethers.parseEther("1.0")
+        });
+
+        const initialBalance = await ethers.provider.getBalance(owner.address);
+        const tx = await khugaBash.withdrawFunds();
+        const receipt = await tx.wait();
+        const gasUsed = receipt.gasUsed * receipt.gasPrice;
+        const finalBalance = await ethers.provider.getBalance(owner.address);
+
+        expect(finalBalance - initialBalance + gasUsed).to.equal(ethers.parseEther("1.0"));
+    });
+
+    it("should revert when trying to withdraw with zero balance", async function () {
+        await expect(
+            khugaBash.withdrawFunds()
+        ).to.be.revertedWithCustomError(khugaBash, "NoFundsToWithdraw");
+    });
+
+    it("should accept ETH via receive() function", async function () {
+        const amount = ethers.parseEther("0.5");
+        await expect(
+            owner.sendTransaction({
+                to: await khugaBash.getAddress(),
+                value: amount
+            })
+        ).to.changeEtherBalances(
+            [owner, khugaBash],
+            [-amount, amount]
+        );
+    });
+
     describe("EIP-712 Signature Security", function () {
         const EIP712_DOMAIN = {
             name: "KhugaBash",
