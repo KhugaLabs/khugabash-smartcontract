@@ -18,3 +18,7 @@ deployments-zk
 
 # Hardhat Ignition default folder for deployments against a local node
 ignition/deployments/chain-31337
+
+.vscode
+CLAUDE.md
+deployments-zk

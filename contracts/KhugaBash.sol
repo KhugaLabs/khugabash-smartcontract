@@ -65,6 +65,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     mapping(address => mapping(bytes32 => bool)) private playerHasCompletedQuest;
     mapping(address => mapping(bytes32 => uint256)) private playerLastDailyClaimDay;
 
+    uint256 public claimQuestFee;
+
     // ═══════════════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -82,6 +84,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     event QuestUpdated(bytes32 indexed questId, string name, string description, uint256 rewardAmount, bool isDaily, string imageUrl);
     event QuestStatusUpdated(bytes32 indexed questId, bool isActive);
     event ResetAllPlayersScore();
+    event ClaimQuestFeeUpdated(uint256 oldFee, uint256 newFee);
+    event FundsWithdrawn(address indexed to, uint256 amount);
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -106,6 +110,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     error QuestAlreadyCompleted();
     error InvalidQuestId();
     error QuestNotActive();
+    error InsufficientClaimFee();
+    error NoFundsToWithdraw();
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR & INITIALIZATION
@@ -119,6 +125,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     function initialize(address initialOwner) public initializer {
         __Ownable_init(initialOwner);
         __UUPSUpgradeable_init();
+        claimQuestFee = 0.00001 ether;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -258,6 +265,27 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
             }
         }
         emit ResetAllPlayersScore();
+    }
+
+    /**
+     * @notice Update the claim quest fee
+     * @param _newFee The new fee amount in wei
+     */
+    function setClaimQuestFee(uint256 _newFee) external onlyOwner {
+        uint256 oldFee = claimQuestFee;
+        claimQuestFee = _newFee;
+        emit ClaimQuestFeeUpdated(oldFee, _newFee);
+    }
+
+    /**
+     * @notice Withdraw accumulated ETH from claim fees to the owner
+     */
+    function withdrawFunds() external onlyOwner {
+        uint256 balance = address(this).balance;
+        if (balance == 0) revert NoFundsToWithdraw();
+        (bool success, ) = payable(owner()).call{value: balance}("");
+        require(success, "Withdrawal failed");
+        emit FundsWithdrawn(owner(), balance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -549,7 +577,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
      * @param questId The ID of the quest
      * @param signature The signature of the player
      */
-    function claimQuest(bytes32 questId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
+    function claimQuest(bytes32 questId, bytes calldata signature) external payable nonReentrant onlyRegisteredPlayer {
+        if (msg.value < claimQuestFee) revert InsufficientClaimFee();
         if (!questExists[questId]) revert QuestNotExists();
         
         Quest memory quest = quests[questId];
