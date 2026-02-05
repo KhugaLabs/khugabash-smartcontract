@@ -2,14 +2,14 @@
 pragma solidity ^0.8.28;
 
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./KtridgeNFT.sol";
 
 contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
-    using SignatureChecker for address;
+    using ECDSA for bytes32;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // STRUCTS
@@ -190,26 +190,47 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     /**
      * @notice Internal function to verify EIP-712 signature
      * @param signature The signature to verify
-     * @param typeHash The type hash of the message struct
-     * @param messageData The encoded message data
+     * @param structHash The pre-computed struct hash
      */
-    function _verifySignature(bytes calldata signature, bytes32 typeHash, bytes memory messageData) internal {
+    function _verifySignature(bytes calldata signature, bytes32 structHash) internal {
         if (backendSigner == address(0)) revert InvalidBackendSigner();
+
+        // Validate signature length (ECDSA signatures are 65 bytes: r[32] + s[32] + v[1])
+        if (signature.length != 65) revert InvalidSignature();
 
         // Prevent signature replay
         bytes32 signatureHash = keccak256(signature);
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
 
         // Create EIP-712 compliant message hash
-        bytes32 structHash = keccak256(abi.encodePacked(typeHash, messageData));
         bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
 
-        // Verify signature
-        if (!SignatureChecker.isValidSignatureNow(backendSigner, messageHash, signature)) {
+        // Verify signature using ECDSA.recover
+        address signer = messageHash.recover(signature);
+        if (signer != backendSigner) {
             revert InvalidSignature();
         }
 
         usedSignatures[signatureHash] = true;
+    }
+
+    /**
+     * @notice Helper function to get current day for daily quests
+     * @return The current day number
+     */
+    function _currentDay() internal view returns (uint256) {
+        return block.timestamp / 1 days;
+    }
+
+    /**
+     * @notice Debug function to test signature verification (for testing only)
+     * @param signature The signature to test
+     * @param structHash The pre-computed struct hash
+     * @return The recovered signer address
+     */
+    function debugVerifySignature(bytes calldata signature, bytes32 structHash) external view returns (address) {
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+        return messageHash.recover(signature);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -387,8 +408,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
 
         // Count both non-daily completed quests and daily quests completed today
         uint256 totalCompleted = playerCompletedQuests[player].length;
-        uint256 currentDay = block.timestamp / 1 days;
-        
+        uint256 currentDay = _currentDay();
+
         // Count daily quests completed today
         for (uint256 i = 0; i < allQuests.length; i++) {
             bytes32 questId = allQuests[i];
@@ -399,14 +420,14 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
 
         Quest[] memory result = new Quest[](totalCompleted);
         uint256 currentIndex = 0;
-        
+
         // Add non-daily completed quests
         bytes32[] memory completedQuestIds = playerCompletedQuests[player];
         for (uint256 i = 0; i < completedQuestIds.length; i++) {
             result[currentIndex] = quests[completedQuestIds[i]];
             currentIndex++;
         }
-        
+
         // Add daily quests completed today
         for (uint256 i = 0; i < allQuests.length; i++) {
             bytes32 questId = allQuests[i];
@@ -415,7 +436,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
                 currentIndex++;
             }
         }
-        
+
         return result;
     }
 
@@ -543,7 +564,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      */
     function canClaimQuest(address player, bytes32 questId) external view returns (bool) {
         if (!players[player].isRegistered || !questExists[questId] || !quests[questId].isActive) return false;
-        return quests[questId].isDaily ? block.timestamp / 1 days > playerLastDailyClaimDay[player][questId] : !playerHasCompletedQuest[player][questId];
+        return quests[questId].isDaily ? _currentDay() > playerLastDailyClaimDay[player][questId] : !playerHasCompletedQuest[player][questId];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -557,9 +578,9 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     function registerPlayer(bytes calldata signature) external {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
 
-        // Create EIP-712 message data
-        bytes memory messageData = abi.encode(msg.sender);
-        _verifySignature(signature, REGISTER_PLAYER_TYPEHASH, messageData);
+        // Create EIP-712 struct hash
+        bytes32 structHash = keccak256(abi.encode(REGISTER_PLAYER_TYPEHASH, msg.sender));
+        _verifySignature(signature, structHash);
 
         players[msg.sender] = Player(0, true);
         playerAddresses.push(msg.sender);
@@ -582,11 +603,9 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     ) external nonReentrant onlyRegisteredPlayer {
         if (allBosses.length == 0) revert BossesNotSet();
 
-        // Create EIP-712 message data
-        bytes memory messageData = abi.encode(
-            msg.sender, _bossIds, score, timestamp
-        );
-        _verifySignature(signature, SYNC_DATA_TYPEHASH, messageData);
+        // Create EIP-712 struct hash
+        bytes32 structHash = keccak256(abi.encode(SYNC_DATA_TYPEHASH, msg.sender, _bossIds, score, timestamp));
+        _verifySignature(signature, structHash);
 
         if (timestamp > playerLastScoreUpdated[msg.sender] && players[msg.sender].score != score) {
             players[msg.sender].score = score;
@@ -618,9 +637,9 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         if (!hasPlayerKilledBoss(msg.sender, bossId)) revert PlayerNotKilledBossYet();
         if (address(ktridgeNFT) == address(0)) revert KtridgeSmartContractNotSet();
 
-        // Create EIP-712 message data
-        bytes memory messageData = abi.encode(msg.sender, bossId);
-        _verifySignature(signature, MINT_KTRIDGE_TYPEHASH, messageData);
+        // Create EIP-712 struct hash
+        bytes32 structHash = keccak256(abi.encode(MINT_KTRIDGE_TYPEHASH, msg.sender, bossId));
+        _verifySignature(signature, structHash);
 
         hasClaimedKtridge[msg.sender][bossId] = true;
         uint256 tokenId = ktridgeNFT.mintKtridge(msg.sender, bossId);
@@ -640,26 +659,23 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         if (!quest.isActive) revert QuestNotActive();
 
         if (quest.isDaily) {
-            if (block.timestamp / 1 days == playerLastDailyClaimDay[msg.sender][questId]) revert QuestAlreadyCompleted();
+            if (_currentDay() == playerLastDailyClaimDay[msg.sender][questId]) revert QuestAlreadyCompleted();
         } else {
             if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
         }
 
-        // Create EIP-712 message data
-        bytes memory messageData;
-        bytes32 typeHash;
+        // Create EIP-712 struct hash
+        bytes32 structHash;
         if (quest.isDaily) {
-            uint256 currentDay = block.timestamp / 1 days;
-            messageData = abi.encode(msg.sender, questId, currentDay);
-            typeHash = CLAIM_QUEST_DAILY_TYPEHASH;
+            uint256 currentDay = _currentDay();
+            structHash = keccak256(abi.encode(CLAIM_QUEST_DAILY_TYPEHASH, msg.sender, questId, currentDay));
         } else {
-            messageData = abi.encode(msg.sender, questId);
-            typeHash = CLAIM_QUEST_TYPEHASH;
+            structHash = keccak256(abi.encode(CLAIM_QUEST_TYPEHASH, msg.sender, questId));
         }
-        _verifySignature(signature, typeHash, messageData);
+        _verifySignature(signature, structHash);
 
         if (quest.isDaily) {
-            playerLastDailyClaimDay[msg.sender][questId] = block.timestamp / 1 days;
+            playerLastDailyClaimDay[msg.sender][questId] = _currentDay();
         } else {
             playerHasCompletedQuest[msg.sender][questId] = true;
             playerCompletedQuests[msg.sender].push(questId);
@@ -681,4 +697,15 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @param newImplementation The address of the new implementation
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
+    // STORAGE GAP FOR UUPS UPGRADEABILITY
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    /**
+     * @dev Storage gap for future upgrades
+     * @notice This reserved space allows adding new state variables in future versions
+     * without shifting down storage locations in existing proxies.
+     */
+    uint256[50] private __gap;
 } 
