@@ -28,7 +28,7 @@ PROXY_ADDRESS=0x...          # Your deployed proxy address
 DEPLOYER_PRIVATE_KEY=0x...   # Your deployer private key
 QUEST_ID=0x...               # Quest ID (use generate-quest-id.ts)
 QUEST_NAME="..."             # Quest name
-REWARD=1000000000000000000  # Reward amount in wei
+REWARD=1000                  # Reward amount in int
 ```
 
 **Optional Environment Variables:**
@@ -49,7 +49,7 @@ QUEST_ID=$(node scripts/generate-quest-id.ts "Daily Login" | grep "Quest ID:" | 
 # Add the quest
 QUEST_ID="$QUEST_ID" \
 QUEST_NAME="Daily Login" \
-REWARD="1000000000000000000" \
+REWARD="1000" \
 npx hardhat run scripts/addQuest.ts --network abstractTestnet
 ```
 
@@ -62,7 +62,7 @@ QUEST_ID=$(node scripts/generate-quest-id.ts "Kill 5 Bosses" | grep "Quest ID:" 
 QUEST_ID="$QUEST_ID" \
 QUEST_NAME="Kill 5 Bosses" \
 QUEST_DESC="Defeat 5 bosses in a single day" \
-REWARD="5000000000000000000" \
+REWARD="1000" \
 IS_DAILY=true \
 IMAGE_URL="https://example.com/boss-quest.png" \
 npx hardhat run scripts/addQuest.ts --network abstractTestnet
@@ -94,14 +94,6 @@ Can be completed once per day by each player.
 ```bash
 IS_DAILY=true
 ```
-
-## Reward Amount Guide
-
-Common reward amounts in wei:
-- 0.001 ETH = 1000000000000000 wei
-- 0.01 ETH = 10000000000000000 wei
-- 0.1 ETH = 100000000000000000 wei
-- 1 ETH = 1000000000000000000 wei
 
 ## Updating Existing Quests
 
