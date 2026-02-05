@@ -146,18 +146,6 @@ describe("KhugaBash", function () {
                 registerValue
             );
 
-            // Verify the signature can be recovered
-            const recoveredAddress = ethers.verifyTypedData(
-                EIP712_DOMAIN,
-                registerTypes,
-                registerValue,
-                signature
-            );
-
-            console.log("Backend address:", backend.address);
-            console.log("Recovered address:", recoveredAddress);
-            console.log("Match:", backend.address === recoveredAddress);
-
             await expect(khugaBash.connect(attacker).registerPlayer(signature))
                 .to.emit(khugaBash, "PlayerRegistered")
                 .withArgs(attacker.address);
@@ -238,6 +226,284 @@ describe("KhugaBash", function () {
             await expect(
                 khugaBash.connect(user).registerPlayer(signature)
             ).to.be.revertedWithCustomError(khugaBash, "InvalidSignature");
+        });
+
+        it("should accept valid syncData signature with multiple boss IDs", async function () {
+            // Register user first
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: user.address }
+            );
+
+            await khugaBash.connect(user).registerPlayer(registerSignature);
+
+            // Get current block timestamp and ensure our sync timestamp is later
+            const block = await ethers.provider.getBlock("latest");
+            const currentBlockTime = block!.timestamp;
+            const timestamp = currentBlockTime + 100; // Ensure it's later than registration time
+
+            // Add multiple bosses
+            const bossId1 = ethers.keccak256(ethers.toUtf8Bytes("boss1"));
+            const bossId2 = ethers.keccak256(ethers.toUtf8Bytes("boss2"));
+            const bossId3 = ethers.keccak256(ethers.toUtf8Bytes("boss3"));
+
+            await khugaBash.addBoss(bossId1);
+            await khugaBash.addBoss(bossId2);
+            await khugaBash.addBoss(bossId3);
+
+            // Create syncData signature with multiple boss IDs
+            const syncDataTypes = {
+                SyncData: [
+                    { name: "player", type: "address" },
+                    { name: "bossIds", type: "bytes32[]" },
+                    { name: "score", type: "uint256" },
+                    { name: "timestamp", type: "uint256" }
+                ]
+            };
+
+            const bossIds = [bossId1, bossId2, bossId3];
+            const score = 250;
+
+            const syncDataValue = {
+                player: user.address,
+                bossIds: bossIds,
+                score: score,
+                timestamp: timestamp
+            };
+
+            const syncDataSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                syncDataTypes,
+                syncDataValue
+            );
+
+            // Call syncData with valid signature
+            const tx = await khugaBash.connect(user).syncData(
+                bossIds,
+                score,
+                timestamp,
+                syncDataSignature
+            );
+
+            // Verify events were emitted
+            await expect(tx)
+                .to.emit(khugaBash, "BossKilled")
+                .withArgs(user.address, bossId1)
+                .and.to.emit(khugaBash, "BossKilled")
+                .withArgs(user.address, bossId2)
+                .and.to.emit(khugaBash, "BossKilled")
+                .withArgs(user.address, bossId3)
+                .and.to.emit(khugaBash, "SyncedData")
+                .withArgs(user.address, bossIds, score);
+
+            // Verify player stats updated
+            const playerStats = await khugaBash.getPlayerStats(user.address);
+            expect(playerStats.score).to.equal(score);
+
+            // Verify boss kills are recorded
+            const killedBosses = await khugaBash.getPlayerKilledBosses(user.address);
+            expect(killedBosses.length).to.equal(3);
+            expect(killedBosses[0]).to.equal(bossId1);
+            expect(killedBosses[1]).to.equal(bossId2);
+            expect(killedBosses[2]).to.equal(bossId3);
+        });
+
+        it("should accept valid syncData signature with single boss ID", async function () {
+            // Register user first
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: attacker.address }
+            );
+
+            await khugaBash.connect(attacker).registerPlayer(registerSignature);
+
+            // Get current block timestamp and ensure our sync timestamp is later
+            const block = await ethers.provider.getBlock("latest");
+            const currentBlockTime = block!.timestamp;
+            const timestamp = currentBlockTime + 100; // Ensure it's later than registration time
+
+            // Add a boss
+            const bossId = ethers.keccak256(ethers.toUtf8Bytes("single_boss"));
+            await khugaBash.addBoss(bossId);
+
+            // Create syncData signature with single boss ID
+            const syncDataTypes = {
+                SyncData: [
+                    { name: "player", type: "address" },
+                    { name: "bossIds", type: "bytes32[]" },
+                    { name: "score", type: "uint256" },
+                    { name: "timestamp", type: "uint256" }
+                ]
+            };
+
+            const bossIds = [bossId];
+            const score = 100;
+
+            const syncDataValue = {
+                player: attacker.address,
+                bossIds: bossIds,
+                score: score,
+                timestamp: timestamp
+            };
+
+            const syncDataSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                syncDataTypes,
+                syncDataValue
+            );
+
+            // Call syncData with valid signature
+            await expect(khugaBash.connect(attacker).syncData(
+                bossIds,
+                score,
+                timestamp,
+                syncDataSignature
+            ))
+                .to.emit(khugaBash, "BossKilled")
+                .withArgs(attacker.address, bossId);
+
+            // Verify player stats updated
+            const playerStats = await khugaBash.getPlayerStats(attacker.address);
+            expect(playerStats.score).to.equal(score);
+
+            // Verify boss kill is recorded
+            const killedBosses = await khugaBash.getPlayerKilledBosses(attacker.address);
+            expect(killedBosses.length).to.equal(1);
+            expect(killedBosses[0]).to.equal(bossId);
+        });
+
+        it("should reject syncData with invalid boss ID in array", async function () {
+            // Register user first
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: user.address }
+            );
+
+            await khugaBash.connect(user).registerPlayer(registerSignature);
+
+            // Add one boss
+            const validBossId = ethers.keccak256(ethers.toUtf8Bytes("valid_boss"));
+            await khugaBash.addBoss(validBossId);
+
+            // Create syncData signature with one valid and one invalid boss ID
+            const syncDataTypes = {
+                SyncData: [
+                    { name: "player", type: "address" },
+                    { name: "bossIds", type: "bytes32[]" },
+                    { name: "score", type: "uint256" },
+                    { name: "timestamp", type: "uint256" }
+                ]
+            };
+
+            const invalidBossId = ethers.keccak256(ethers.toUtf8Bytes("invalid_boss"));
+            const bossIds = [validBossId, invalidBossId];
+            const score = 150;
+            const timestamp = Math.floor(Date.now() / 1000);
+
+            const syncDataValue = {
+                player: user.address,
+                bossIds: bossIds,
+                score: score,
+                timestamp: timestamp
+            };
+
+            const syncDataSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                syncDataTypes,
+                syncDataValue
+            );
+
+            // Should revert due to invalid boss ID
+            await expect(
+                khugaBash.connect(user).syncData(
+                    bossIds,
+                    score,
+                    timestamp,
+                    syncDataSignature
+                )
+            ).to.be.revertedWithCustomError(khugaBash, "InvalidBosses");
+        });
+
+        it("should prevent duplicate boss kills in same syncData call", async function () {
+            // Register user first
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: user.address }
+            );
+
+            await khugaBash.connect(user).registerPlayer(registerSignature);
+
+            // Add a boss
+            const bossId = ethers.keccak256(ethers.toUtf8Bytes("dup_boss"));
+            await khugaBash.addBoss(bossId);
+
+            // Create syncData signature with duplicate boss ID in array
+            const syncDataTypes = {
+                SyncData: [
+                    { name: "player", type: "address" },
+                    { name: "bossIds", type: "bytes32[]" },
+                    { name: "score", type: "uint256" },
+                    { name: "timestamp", type: "uint256" }
+                ]
+            };
+
+            const bossIds = [bossId, bossId]; // Duplicate boss IDs
+            const score = 200;
+            const timestamp = Math.floor(Date.now() / 1000);
+
+            const syncDataValue = {
+                player: user.address,
+                bossIds: bossIds,
+                score: score,
+                timestamp: timestamp
+            };
+
+            const syncDataSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                syncDataTypes,
+                syncDataValue
+            );
+
+            // Call syncData - should succeed but boss should only be recorded once
+            await khugaBash.connect(user).syncData(
+                bossIds,
+                score,
+                timestamp,
+                syncDataSignature
+            );
+
+            // Verify boss was killed only once
+            const killedBosses = await khugaBash.getPlayerKilledBosses(user.address);
+            expect(killedBosses.length).to.equal(1);
+            expect(killedBosses[0]).to.equal(bossId);
         });
     });
 });

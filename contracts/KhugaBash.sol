@@ -604,7 +604,14 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         if (allBosses.length == 0) revert BossesNotSet();
 
         // Create EIP-712 struct hash
-        bytes32 structHash = keccak256(abi.encode(SYNC_DATA_TYPEHASH, msg.sender, _bossIds, score, timestamp));
+        // For arrays in EIP-712, use keccak256(abi.encodePacked(array))
+        bytes32 structHash = keccak256(abi.encode(
+            SYNC_DATA_TYPEHASH,
+            msg.sender,
+            keccak256(abi.encodePacked(_bossIds)),  // Array must be hashed with encodePacked
+            score,
+            timestamp
+        ));
         _verifySignature(signature, structHash);
 
         if (timestamp > playerLastScoreUpdated[msg.sender] && players[msg.sender].score != score) {
