@@ -40,14 +40,88 @@ describe("KhugaBash", function () {
     it("should revert if non-owner tries to set backend signer", async function () {
         await expect(
             khugaBash.connect(user).setBackendSigner(backend.address)
-        ).to.be.revertedWith("Ownable: caller is not the owner");
+        ).to.be.revertedWithCustomError(khugaBash, "OwnableUnauthorizedAccount");
     });
 
     it("should revert if non-owner tries to set KtridgeNFT", async function () {
         await expect(
             khugaBash.connect(user).setKtridgeNFT(await ktridgeNFT.getAddress())
-        ).to.be.revertedWith("Ownable: caller is not the owner");
+        ).to.be.revertedWithCustomError(khugaBash, "OwnableUnauthorizedAccount");
     });
 
-    // Add more tests for registration, syncData, mintKtridge, etc.
+    describe("EIP-712 Signature Security", function () {
+        const EIP712_DOMAIN = {
+            name: "KhugaBash",
+            version: "1",
+            chainId: 31337, // Hardhat default
+            verifyingContract: "" as string // Will be set after deployment
+        };
+
+        beforeEach(async function () {
+            await khugaBash.setBackendSigner(backend.address);
+            await khugaBash.setKtridgeNFT(await ktridgeNFT.getAddress());
+            EIP712_DOMAIN.verifyingContract = await khugaBash.getAddress();
+        });
+
+        it("should reject signature from different chain", async function () {
+            // User registers on chain A
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerValue = { player: user.address };
+            const signature = await backend.signTypedData(
+                { ...EIP712_DOMAIN, chainId: 1 }, // Different chain
+                registerTypes,
+                registerValue
+            );
+
+            await expect(
+                khugaBash.connect(user).registerPlayer(signature)
+            ).to.be.revertedWithCustomError(khugaBash, "InvalidSignature");
+        });
+
+        it("should reject cross-function signature replay", async function () {
+            // Register user first
+            const registerTypes = {
+                RegisterPlayer: [
+                    { name: "player", type: "address" }
+                ]
+            };
+
+            const registerSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: user.address }
+            );
+
+            await khugaBash.connect(user).registerPlayer(registerSignature);
+
+            // Add a boss
+            const bossId = ethers.keccak256(ethers.toUtf8Bytes("boss1"));
+            await khugaBash.addBoss(bossId);
+
+            // Create a RegisterPlayer signature for a different address (not yet used)
+            const otherAddress = "0x0000000000000000000000000000000000000001";
+            const fakeRegisterSignature = await backend.signTypedData(
+                EIP712_DOMAIN,
+                registerTypes,
+                { player: otherAddress }
+            );
+
+            const timestamp = Math.floor(Date.now() / 1000);
+
+            // Try to use RegisterPlayer signature for syncData - should fail due to type mismatch
+            await expect(
+                khugaBash.connect(user).syncData(
+                    [bossId],
+                    100,
+                    timestamp,
+                    fakeRegisterSignature
+                )
+            ).to.be.revertedWithCustomError(khugaBash, "InvalidSignature");
+        });
+    });
 });

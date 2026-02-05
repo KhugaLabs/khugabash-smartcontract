@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./KtridgeNFT.sol";
 
-contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, UUPSUpgradeable {
+contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
     using SignatureChecker for address;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -68,6 +68,37 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     uint256 public claimQuestFee;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
+    // EIP-712 DOMAIN
+    // ═══════════════════════════════════════════════════════════════════════════════════
+
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    );
+
+    bytes32 private DOMAIN_SEPARATOR;
+
+    // Type hashes for each function
+    bytes32 private constant REGISTER_PLAYER_TYPEHASH = keccak256(
+        "RegisterPlayer(address player)"
+    );
+
+    bytes32 private constant SYNC_DATA_TYPEHASH = keccak256(
+        "SyncData(address player,bytes32[] bossIds,uint256 score,uint256 timestamp)"
+    );
+
+    bytes32 private constant MINT_KTRIDGE_TYPEHASH = keccak256(
+        "MintKtridge(address player,bytes32 bossId)"
+    );
+
+    bytes32 private constant CLAIM_QUEST_DAILY_TYPEHASH = keccak256(
+        "ClaimQuestDaily(address player,bytes32 questId,uint256 day)"
+    );
+
+    bytes32 private constant CLAIM_QUEST_TYPEHASH = keccak256(
+        "ClaimQuest(address player,bytes32 questId)"
+    );
+
+    // ═══════════════════════════════════════════════════════════════════════════════════
     // EVENTS
     // ═══════════════════════════════════════════════════════════════════════════════════
 
@@ -125,7 +156,19 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     function initialize(address initialOwner) public initializer {
         __Ownable_init(initialOwner);
         __UUPSUpgradeable_init();
+        __ReentrancyGuard_init();
         claimQuestFee = 0.00001 ether;
+
+        // Initialize EIP-712 domain separator
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH,
+                keccak256(bytes("KhugaBash")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -145,15 +188,27 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     // ═══════════════════════════════════════════════════════════════════════════════════
 
     /**
-     * @notice Internal function to verify the signature
+     * @notice Internal function to verify EIP-712 signature
      * @param signature The signature to verify
-     * @param messageHash The message hash to verify
+     * @param typeHash The type hash of the message struct
+     * @param messageData The encoded message data
      */
-    function _verifySignature(bytes calldata signature, bytes32 messageHash) internal {
+    function _verifySignature(bytes calldata signature, bytes32 typeHash, bytes memory messageData) internal {
         if (backendSigner == address(0)) revert InvalidBackendSigner();
+
+        // Prevent signature replay
         bytes32 signatureHash = keccak256(signature);
         if (usedSignatures[signatureHash]) revert SignatureAlreadyUsed();
-        if (!SignatureChecker.isValidSignatureNow(backendSigner, messageHash, signature)) revert InvalidSignature();
+
+        // Create EIP-712 compliant message hash
+        bytes32 structHash = keccak256(abi.encodePacked(typeHash, messageData));
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, structHash));
+
+        // Verify signature
+        if (!SignatureChecker.isValidSignatureNow(backendSigner, messageHash, signature)) {
+            revert InvalidSignature();
+        }
+
         usedSignatures[signatureHash] = true;
     }
 
@@ -501,8 +556,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
      */
     function registerPlayer(bytes calldata signature) external {
         if (players[msg.sender].isRegistered) revert PlayerAlreadyRegistered();
-        bytes32 messageHash = keccak256(abi.encodePacked(bytes4(keccak256("registerPlayer(address)")), msg.sender));
-        _verifySignature(signature, messageHash);
+
+        // Create EIP-712 message data
+        bytes memory messageData = abi.encode(msg.sender);
+        _verifySignature(signature, REGISTER_PLAYER_TYPEHASH, messageData);
 
         players[msg.sender] = Player(0, true);
         playerAddresses.push(msg.sender);
@@ -524,11 +581,12 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         bytes calldata signature
     ) external nonReentrant onlyRegisteredPlayer {
         if (allBosses.length == 0) revert BossesNotSet();
-        bytes32 messageHash = keccak256(abi.encodePacked(
-            bytes4(keccak256("syncData(address,bytes32[],uint256,uint256)")),
+
+        // Create EIP-712 message data
+        bytes memory messageData = abi.encode(
             msg.sender, _bossIds, score, timestamp
-        ));
-        _verifySignature(signature, messageHash);
+        );
+        _verifySignature(signature, SYNC_DATA_TYPEHASH, messageData);
 
         if (timestamp > playerLastScoreUpdated[msg.sender] && players[msg.sender].score != score) {
             players[msg.sender].score = score;
@@ -559,13 +617,10 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
         if (hasClaimedKtridge[msg.sender][bossId]) revert KtridgeAlreadyClaimed();
         if (!hasPlayerKilledBoss(msg.sender, bossId)) revert PlayerNotKilledBossYet();
         if (address(ktridgeNFT) == address(0)) revert KtridgeSmartContractNotSet();
-        
-        bytes32 messageHash = keccak256(abi.encodePacked(
-            bytes4(keccak256("mintKtridge(address,bytes32)")), 
-            msg.sender, 
-            bossId
-        ));
-        _verifySignature(signature, messageHash);
+
+        // Create EIP-712 message data
+        bytes memory messageData = abi.encode(msg.sender, bossId);
+        _verifySignature(signature, MINT_KTRIDGE_TYPEHASH, messageData);
 
         hasClaimedKtridge[msg.sender][bossId] = true;
         uint256 tokenId = ktridgeNFT.mintKtridge(msg.sender, bossId);
@@ -580,7 +635,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
     function claimQuest(bytes32 questId, bytes calldata signature) external payable nonReentrant onlyRegisteredPlayer {
         if (msg.value < claimQuestFee) revert InsufficientClaimFee();
         if (!questExists[questId]) revert QuestNotExists();
-        
+
         Quest memory quest = quests[questId];
         if (!quest.isActive) revert QuestNotActive();
 
@@ -590,18 +645,18 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuard, U
             if (playerHasCompletedQuest[msg.sender][questId]) revert QuestAlreadyCompleted();
         }
 
-        bytes32 messageHash;
+        // Create EIP-712 message data
+        bytes memory messageData;
+        bytes32 typeHash;
         if (quest.isDaily) {
             uint256 currentDay = block.timestamp / 1 days;
-            messageHash = keccak256(abi.encodePacked(
-                bytes4(keccak256("claimQuest(address,bytes32,uint256)")), msg.sender, questId, currentDay
-            ));
+            messageData = abi.encode(msg.sender, questId, currentDay);
+            typeHash = CLAIM_QUEST_DAILY_TYPEHASH;
         } else {
-            messageHash = keccak256(abi.encodePacked(
-                bytes4(keccak256("claimQuest(address,bytes32)")), msg.sender, questId
-            ));
+            messageData = abi.encode(msg.sender, questId);
+            typeHash = CLAIM_QUEST_TYPEHASH;
         }
-        _verifySignature(signature, messageHash);
+        _verifySignature(signature, typeHash, messageData);
 
         if (quest.isDaily) {
             playerLastDailyClaimDay[msg.sender][questId] = block.timestamp / 1 days;
