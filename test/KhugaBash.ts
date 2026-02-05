@@ -105,10 +105,10 @@ describe("KhugaBash", function () {
         const initialBalance = await ethers.provider.getBalance(owner.address);
         const tx = await khugaBash.withdrawFunds();
         const receipt = await tx.wait();
-        const gasUsed = receipt.gasUsed * receipt.gasPrice;
+        const gasCost = receipt.gasUsed * receipt.gasPrice;
         const finalBalance = await ethers.provider.getBalance(owner.address);
 
-        expect(finalBalance - initialBalance + gasUsed).to.equal(ethers.parseEther("1.0"));
+        expect(finalBalance + gasCost - initialBalance).to.equal(ethers.parseEther("1.0"));
     });
 
     it("should revert when trying to withdraw with zero balance", async function () {
