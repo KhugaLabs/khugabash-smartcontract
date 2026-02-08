@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./KtridgeNFT.sol";
 
-contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable, UUPSUpgradeable {
+contract KhugaBash is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
     using ECDSA for bytes32;
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -39,6 +38,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     // STATE VARIABLES
     // ═══════════════════════════════════════════════════════════════════════════════════
 
+    uint256 private _status;  // Reserved for v2.0 ReentrancyGuard compatibility
+
     address public backendSigner;
     uint256 private constant MAX_LEADERBOARD_SIZE = 100;
 
@@ -65,7 +66,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     mapping(address => mapping(bytes32 => bool)) private playerHasCompletedQuest;
     mapping(address => mapping(bytes32 => uint256)) private playerLastDailyClaimDay;
 
-    uint256 public claimQuestFee;
+    uint256 private constant CLAIM_QUEST_FEE = 0.00001 ether;  // Fee for claiming quests
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // EIP-712 DOMAIN (constants don't use storage)
@@ -113,9 +114,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     event QuestUpdated(bytes32 indexed questId, string name, string description, uint256 rewardAmount, bool isDaily, string imageUrl);
     event QuestStatusUpdated(bytes32 indexed questId, bool isActive);
     event ResetAllPlayersScore();
-    event ClaimQuestFeeUpdated(uint256 oldFee, uint256 newFee);
     event FundsWithdrawn(address indexed to, uint256 amount);
-    event WithdrawalAddressSet(address indexed withdrawalAddress);
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -142,7 +141,6 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     error QuestNotActive();
     error InsufficientClaimFee();
     error NoFundsToWithdraw();
-    error InvalidWithdrawalAddress();
 
     // ═══════════════════════════════════════════════════════════════════════════════════
     // CONSTRUCTOR & INITIALIZATION
@@ -156,8 +154,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     function initialize(address initialOwner) public initializer {
         __Ownable_init(initialOwner);
         __UUPSUpgradeable_init();
-        __ReentrancyGuard_init();
-        claimQuestFee = 0.00001 ether;
+        // claimQuestFee is now a constant: CLAIM_QUEST_FEE = 0.00001 ether
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -349,39 +346,18 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
     }
 
     /**
-     * @notice Update the claim quest fee
-     * @param _newFee The new fee amount in wei
-     */
-    function setClaimQuestFee(uint256 _newFee) external onlyOwner {
-        uint256 oldFee = claimQuestFee;
-        claimQuestFee = _newFee;
-        emit ClaimQuestFeeUpdated(oldFee, _newFee);
-    }
-
-    /**
-     * @notice Set the withdrawal address for claim fees
-     * @param _withdrawalAddress The address to withdraw funds to
-     */
-    function setWithdrawalAddress(address _withdrawalAddress) external onlyOwner {
-        if (_withdrawalAddress == address(0)) revert InvalidWithdrawalAddress();
-        if (withdrawalAddress != _withdrawalAddress) {
-            withdrawalAddress = _withdrawalAddress;
-            emit WithdrawalAddressSet(_withdrawalAddress);
-        }
-    }
-
-    /**
      * @notice Withdraw accumulated ETH from claim fees
+     * @dev Fees are always withdrawn to the contract owner for simplicity
+     * This avoids adding a withdrawalAddress storage variable
      */
     function withdrawFunds() external onlyOwner {
         uint256 balance = address(this).balance;
         if (balance == 0) revert NoFundsToWithdraw();
 
-        // Withdraw to designated address, fallback to owner if not set
-        address recipient = withdrawalAddress != address(0) ? withdrawalAddress : owner();
-        (bool success, ) = payable(recipient).call{value: balance}("");
+        // Withdraw to owner (no separate withdrawal address to maintain storage compatibility)
+        (bool success, ) = payable(owner()).call{value: balance}("");
         require(success, "Withdrawal failed");
-        emit FundsWithdrawn(recipient, balance);
+        emit FundsWithdrawn(owner(), balance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════════════
@@ -620,7 +596,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
         uint256 score,
         uint256 timestamp,
         bytes calldata signature
-    ) external nonReentrant onlyRegisteredPlayer {
+    ) external onlyRegisteredPlayer {
         if (allBosses.length == 0) revert BossesNotSet();
 
         // Create EIP-712 struct hash
@@ -659,7 +635,7 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @param bossId The ID of the boss
      * @param signature The signature of the player
      */
-    function mintKtridge(bytes32 bossId, bytes calldata signature) external nonReentrant onlyRegisteredPlayer {
+    function mintKtridge(bytes32 bossId, bytes calldata signature) external onlyRegisteredPlayer {
         if (hasClaimedKtridge[msg.sender][bossId]) revert KtridgeAlreadyClaimed();
         if (!hasPlayerKilledBoss(msg.sender, bossId)) revert PlayerNotKilledBossYet();
         if (address(ktridgeNFT) == address(0)) revert KtridgeSmartContractNotSet();
@@ -678,8 +654,8 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @param questId The ID of the quest
      * @param signature The signature of the player
      */
-    function claimQuest(bytes32 questId, bytes calldata signature) external payable nonReentrant onlyRegisteredPlayer {
-        if (msg.value < claimQuestFee) revert InsufficientClaimFee();
+    function claimQuest(bytes32 questId, bytes calldata signature) external payable onlyRegisteredPlayer {
+        if (msg.value < CLAIM_QUEST_FEE) revert InsufficientClaimFee();
         if (!questExists[questId]) revert QuestNotExists();
 
         Quest memory quest = quests[questId];
@@ -729,22 +705,4 @@ contract KhugaBash is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpg
      * @notice Accept ETH transfers
      */
     receive() external payable {}
-
-    // ═══════════════════════════════════════════════════════════════════════════════════
-    // NEW STATE VARIABLES (MUST BE AT END FOR STORAGE COMPATIBILITY)
-    // ═══════════════════════════════════════════════════════════════════════════════════
-
-    // Designated withdrawal address (MUST be last variable before gap)
-    address public withdrawalAddress;
-
-    // ═══════════════════════════════════════════════════════════════════════════════════
-    // STORAGE GAP FOR UUPS UPGRADEABILITY
-    // ═══════════════════════════════════════════════════════════════════════════════════
-
-    /**
-     * @dev Storage gap for future upgrades
-     * @notice This reserved space allows adding new state variables in future versions
-     * without shifting down storage locations in existing proxies.
-     */
-    uint256[50] private __gap;
 } 

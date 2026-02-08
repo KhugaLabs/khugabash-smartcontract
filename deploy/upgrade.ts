@@ -10,7 +10,7 @@ export default async function (hre: HardhatRuntimeEnvironment) {
     const deployer = new Deployer(hre, wallet);
 
     // 1. The address of your deployed proxy
-    const proxyAddress = "0x58791F8D9C4f6A64f355BfB08c652D261182E575"; // <-- Replace with your proxy address
+    const proxyAddress = "0xafcA524Dc2CDd7C21cD1de4E837c8c813c8322CC"; // <-- Replace with your proxy address
 
     // 2. Deploy the new implementation
     const khugaBashArtifact = await deployer.loadArtifact("KhugaBash");

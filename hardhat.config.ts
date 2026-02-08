@@ -28,9 +28,8 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
-      // abstractTestnet: "TACK2D1RGYX9U7MC31SZWWQ7FCWRYQ96AD",
       abstractTestnet: "36GG3I5AJ9XM874CX5B45JIZREV1FC7IM5",
-      abstractMainnet: "IEYKU3EEM5XCD76N7Y7HF9HG7M9ARZ2H4A",
+      abstractMainnet: "36GG3I5AJ9XM874CX5B45JIZREV1FC7IM5",
     },
     customChains: [
       {
